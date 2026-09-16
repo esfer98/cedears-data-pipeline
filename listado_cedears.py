@@ -1,0 +1,198 @@
+"""
+listado_cedears.py
+-------------------
+Lista de empresas con CEDEAR en Argentina, una fila por empresa (sin repetir
+las variantes de liquidacion: pesos / "C" / "D" son el mismo papel).
+
+Sirve para corroborar rapido si existe CEDEAR de una accion antes de
+analizarla con datos de la bolsa de EE.UU.
+
+Correr:  python listado_cedears.py
+"""
+
+import re
+from pathlib import Path
+
+import pandas as pd
+from dotenv import load_dotenv
+
+import db
+from iol_client import IOLClient
+
+load_dotenv()
+
+# Los ETF-CEDEAR (SPDR, iShares, Invesco, etc.) no son empresas: no tienen
+# estados de resultados que analizar, asi que se descartan del listado.
+PATRON_ETF = re.compile(
+    r"(?i)\betf\b|select sector|spdr|ishares|invesco|proshares|direxion"
+    r"|van eck|vanguard|global x|\bipath\b|\btrust\b|\bfund\b"
+)
+
+# Empresas que ya quedan cubiertas por otra fila del listado con un ticker
+# base conocido (misma empresa, pero IOL escribe la descripcion tan distinto
+# entre variantes que la deduplicacion automatica no las pudo unir). Se
+# descarta cualquier ticker "BASE + una letra" (BMYC, BMYD, ...) porque cual
+# de las variantes queda como "mas corta" puede cambiar de una corrida a otra
+# segun como IOL ordene el panel en vivo -- comparar el string completo
+# (p.ej. "BMYC") es fragil, comparar el stem es estable.
+STEMS_CON_DUPLICADO = {
+    "AZN",  # Astrazeneca: la variante trae un typo ("Aztrazeneca") y no se agrupa
+    "BMY",  # Bristol-Myers Squibb
+    "SHEL",  # Shell Plc
+    "MDT",  # Medtronic (variante "Esc")
+    "IBM",
+    "IFF",  # International Flavors & Fragrances
+    "UGP",  # Ultrapar
+}
+# Casos puntuales que no siguen el patron "stem + una letra":
+DUPLICADOS_LITERALES_A_DESCARTAR = {
+    "GOGLC",  # = GOOGL (nombre viejo "Google Inc", IOL nunca lo renombro)
+    "BKC*",   # = BNY (Bank Of New York Mellon, variante "Cta.Ext")
+    "VAL3C",  # = VALE (mismo Vale, pero via el ADR de EE.UU. ya alcanza)
+}
+
+
+def es_duplicado(ticker: str) -> bool:
+    if ticker in DUPLICADOS_LITERALES_A_DESCARTAR:
+        return True
+    stem = ticker[:-1]
+    return stem in STEMS_CON_DUPLICADO and ticker != stem
+
+# Correcciones de ticker para poder pedirle el papel a Yahoo Finance.
+# Confirmadas a mano contra yfinance (nombre real de la empresa) antes de
+# usarlas: IOL arma el simbolo distinto al que usa Yahoo (typos, sufijos de
+# liquidacion pegados al ticker, o listados en otra bolsa).
+TICKERS_YAHOO = {
+    # BDRs brasileños: Yahoo los pide con sufijo ".SA" (Bolsa de San Pablo)
+    "BBAS3": "BBAS3.SA", "ITUB3": "ITUB3.SA", "SBSP3": "SBSP3.SA",
+    "HAPV3": "HAPV3.SA", "RENT3": "RENT3.SA", "LREN3": "LREN3.SA",
+    "MGLU3": "MGLU3.SA", "PRIO3": "PRIO3.SA", "SUZB3": "SUZB3.SA",
+    "TIMS3": "TIMS3.SA", "WEGE3": "WEGE3.SA",
+    "BPA11": "BPAC11.SA",  # IOL trunca "BPAC11" (Banco BTG Pactual) a "BPA11"
+    # Simbolo de IOL no coincide con el de Yahoo (typo o formato viejo)
+    "BRKB": "BRK-B", "BA.C": "BAC", "BNG": "BG", "KOFM": "KOF",
+    "NOKA": "NOK", "PKS": "PKX", "TXR": "TX", "TRVV": "TRV",
+    "DISN": "DIS", "WBO": "WB", "XROX": "XRX", "BBV": "BBVA",
+    "ADGO": "AGRO",
+    # Listados en otras bolsas: Yahoo pide el sufijo de esa plaza
+    "ADS": "ADS.DE",     # Adidas, Frankfurt
+    "AKO.B": "AKO-B",    # Embotelladora Andina, clase B
+    "SMSN": "SMSN.IL",   # Samsung Electronics, GDR de Londres
+}
+
+
+def normalizar_empresa(descripcion: str) -> str:
+    """Nombre de empresa limpio, sin el prefijo 'Cedear' ni puntuacion suelta."""
+    nombre = re.sub(r"(?i)^cedear\s+", "", descripcion).strip()
+    nombre = re.sub(r"[.,]+$", "", nombre).strip()
+    return nombre
+
+
+def clasificar_mercado(ticker: str) -> str:
+    """BDRs brasileños terminan en digitos (clase de accion en B3), p.ej.
+    RENT3, MGLU3, BPA11. El resto son ADRs/acciones de EE.UU. u otras bolsas."""
+    return "brasil" if re.search(r"\d[A-Za-z]?$", ticker) else "usa_otros"
+
+
+def clave_agrupacion(nombre: str) -> str:
+    """Clave para detectar que dos descripciones son la misma empresa
+    (ignora mayusculas/puntuacion: 'Ambev S.A.' y 'Ambev S.A' agrupan igual)."""
+    return re.sub(r"[^a-z0-9]", "", nombre.lower())
+
+
+def unir_claves_truncadas(claves: list[str]) -> dict[str, str]:
+    """IOL trunca la descripcion a un largo variable segun el simbolo, asi que
+    la misma empresa puede aparecer como 'Adobe Systems Incorpor' en un
+    simbolo y 'Adobe Systems Incorporated' en otro. Union-Find: si una clave
+    es prefijo de otra (>=6 caracteres para evitar falsos positivos con
+    nombres cortos), se unen en el mismo grupo."""
+    unicas = sorted(set(claves), key=len)
+    padre = {c: c for c in unicas}
+
+    def encontrar(c: str) -> str:
+        while padre[c] != c:
+            padre[c] = padre[padre[c]]
+            c = padre[c]
+        return c
+
+    for i, corta in enumerate(unicas):
+        if len(corta) < 6:
+            continue
+        for larga in unicas[i + 1:]:
+            if larga.startswith(corta):
+                padre[encontrar(corta)] = encontrar(larga)
+
+    return {c: encontrar(c) for c in unicas}
+
+
+def listar_empresas(iol: IOLClient) -> pd.DataFrame:
+    """Trae el panel de CEDEARs y lo reduce a una fila por empresa.
+
+    Cada empresa suele tener 2 o 3 simbolos (liquidacion en pesos, "C" y "D").
+    Se usa la descripcion (no el simbolo) para agrupar, porque IOL arma los
+    simbolos de forma inconsistente: p.ej. BA/BAC/BAD son las 3 variantes de
+    Boeing, mientras que BA.C/BA.CC/BA.CD son las de Bank of America.
+
+    Nota: quedan afuera de esta deduplicacion un puñado de casos donde IOL
+    directamente escribe la descripcion distinto entre variantes (typos como
+    "Aztrazeneca" vs "Astrazeneca", o los ETFs sectoriales SPDR que alternan
+    entre "State Street X Select Sector Spdr" y "The X Select Sector Spdr").
+    Esos son errores de tipeo en el dato fuente, no algo que se pueda arreglar
+    de forma generica sin una tabla de alias a mano.
+    """
+    panel = iol.cedears_panel()
+    df = pd.DataFrame(panel["titulos"])
+    df = df[~df["descripcion"].str.contains(PATRON_ETF, regex=True, na=False)]
+
+    df["empresa"] = df["descripcion"].apply(normalizar_empresa)
+    df["clave"] = df["empresa"].apply(clave_agrupacion)
+
+    mapa_grupo = unir_claves_truncadas(df["clave"].tolist())
+    df["grupo"] = df["clave"].map(mapa_grupo)
+
+    filas = []
+    for _, grupo in df.groupby("grupo"):
+        nombre = grupo.loc[grupo["empresa"].str.len().idxmax(), "empresa"]
+        principal = grupo.assign(_len=grupo["simbolo"].str.len()).sort_values("_len").iloc[0]
+        ticker = principal["simbolo"]
+
+        if es_duplicado(ticker):
+            continue
+
+        variantes = sorted(grupo["simbolo"])
+        filas.append({
+            "ticker_usd": ticker,
+            "ticker_cedear": ticker,  # en BYMA usan la misma base
+            "ticker_yahoo": TICKERS_YAHOO.get(ticker, ticker),
+            "mercado": clasificar_mercado(ticker),
+            "nombre_empresa": nombre.title(),
+            "variantes": ", ".join(variantes),
+        })
+
+    return pd.DataFrame(filas).sort_values("nombre_empresa").reset_index(drop=True)
+
+
+def main() -> None:
+    iol = IOLClient()
+    iol.login()
+    print("Ingreso a IOL: OK\n")
+
+    empresas = listar_empresas(iol)
+    print(f"CEDEARs unicos (por empresa, sin ETFs): {len(empresas)}")
+    print(f"  de Brasil: {(empresas['mercado'] == 'brasil').sum()}\n")
+    print(empresas[["ticker_usd", "mercado", "nombre_empresa"]].to_string(index=False))
+
+    out_dir = Path("data")
+    out_dir.mkdir(exist_ok=True)
+    destino = out_dir / "cedears_normalizados.csv"
+    empresas.to_csv(destino, index=False)
+    print(f"\nListado guardado en {destino}")
+
+    con = db.conectar()
+    db.upsert_dim_empresa(con, empresas.to_dict("records"))
+    con.close()
+    print("dim_empresa actualizada en data/warehouse.duckdb")
+
+
+if __name__ == "__main__":
+    main()

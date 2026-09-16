@@ -1,0 +1,24 @@
+# Credenciales - NUNCA subir
+.env
+
+# Bundle de certificados local (Norton SSL scanning) - especifico de esta máquina
+*.pem
+
+# Entorno virtual
+.venv/
+venv/
+
+# Cache de Python
+__pycache__/
+*.pyc
+
+# Datos generados
+data/
+cache/
+*.csv
+
+# VS Code
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
