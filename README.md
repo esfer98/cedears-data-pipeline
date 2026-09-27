@@ -29,12 +29,14 @@ flowchart LR
         dim[("dim_empresa")]
         fm[("fact_metrics_daily")]
         fp[("fact_precios_daily")]
+        fi[("fact_income_statement_annual")]
+        fe[("fact_eps_trimestral")]
     end
 
     subgraph Gold["Gold — una metodologia por archivo, columnas prefijadas"]
         lynch["gold/lynch.py<br/>vista gold_lynch (columnas lynch_*)"]
+        comp["gold/comparables.py<br/>vista gold_comparables (columnas comp_*)"]
         quant["gold/quant.py (futuro)"]
-        tech["gold/technical.py (futuro)"]
     end
 
     subgraph Consumo
@@ -46,10 +48,11 @@ flowchart LR
     cache --> listado --> db
     cache --> fund --> db
     cache --> precios --> db
-    db --> dim & fm & fp
-    dim & fm & fp --> lynch & quant & tech
-    dim & fm & fp --> nb
+    db --> dim & fm & fp & fi & fe
+    dim & fm & fp & fi & fe --> lynch & comp & quant
+    dim & fm & fp & fi & fe --> nb
     lynch --> nb
+    comp --> nb
 ```
 
 **Estado actual:** Transform y Load viven juntos, en Python (pandas), dentro de
@@ -78,6 +81,12 @@ modelo dimensional:
   ROE, ROA, deuda/patrimonio, liquidez, dividendo, beta, tenencia
   insider/institucional).
 - **`fact_precios_daily`** — un OHLCV por día (PK `ticker_usd` + `fecha`).
+- **`fact_income_statement_annual`** — ingresos/ganancia neta en $ por balance
+  anual (PK `ticker_usd` + `fecha_balance`). Es la serie real detrás de
+  `crecimiento_ingresos_anual_pct` — para graficar tendencia, no solo el %.
+- **`fact_eps_trimestral`** — EPS estimado/reportado por trimestre (PK
+  `ticker_usd` + `fecha_reporte`), incluye el **próximo** informe (todavía
+  sin `eps_reportado`) para saber cuándo es el próximo reporte.
 
 Cada tabla se carga con `UPSERT` (`ON CONFLICT ... DO UPDATE`), así que correr
 un script dos veces el mismo día no duplica filas, y correrlo días distintos
@@ -90,6 +99,7 @@ python listado_cedears.py       # 1. Universo IOL -> dim_empresa (identidad)
 python analisis_fundamental.py  # 2. Yahoo -> fact_metrics_daily + sector/industria en dim_empresa
 python precios_historicos.py    # 3. Yahoo -> fact_precios_daily (OHLCV, 5 años)
 python gold/lynch.py            # 4. Crea/actualiza la vista gold_lynch (no pide datos nuevos)
+python gold/comparables.py      # 5. Crea/actualiza la vista gold_comparables (idem, no pide datos nuevos)
 ```
 
 `listado_cedears.py` tiene que correr primero: los otros dos leen
@@ -116,12 +126,13 @@ cedears-data-pipeline/
 ├── db.py                  # conexion + schema + upserts de DuckDB
 ├── iol_client.py           # cliente de la API de IOL (auth + endpoints)
 ├── listado_cedears.py      # universo IOL -> dim_empresa + cedears_normalizados.csv
-├── analisis_fundamental.py # momentum + ratios de Yahoo -> fact_metrics_daily
+├── analisis_fundamental.py # momentum + ratios de Yahoo -> fact_metrics_daily + series crudas (income statement, EPS)
 ├── precios_historicos.py   # OHLCV de Yahoo -> fact_precios_daily
 ├── gold/                   # una metodologia de analisis = un archivo, columnas prefijadas
-│   └── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)
+│   ├── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)
+│   └── comparables.py      # vista gold_comparables (empresa vs. mediana de su sector + pares similares)
 ├── notebooks/
-│   └── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch)
+│   └── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción)
 ├── cache/                  # cache en disco por ticker (evita re-pedirle a Yahoo)
 └── data/                   # se genera solo: CSVs + warehouse.duckdb
 ```
@@ -165,6 +176,7 @@ registrado como "Python 3 (.venv)" — si VS Code no lo detecta solo, `Ctrl+Shif
    python analisis_fundamental.py
    python precios_historicos.py
    python gold/lynch.py
+   python gold/comparables.py
    ```
 
 ## Notas
