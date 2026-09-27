@@ -1,13 +1,15 @@
 """
 db.py
 -----
-Warehouse local en DuckDB (un solo archivo, sin servidor) con 5 tablas:
+Warehouse local en DuckDB (un solo archivo, sin servidor) con 6 tablas:
 
   dim_empresa                  - descriptiva, cambia poco (PK: ticker_usd)
   fact_metrics_daily           - ratios de valuacion y momentum, una fila por dia (PK: ticker_usd + fecha)
   fact_precios_daily           - OHLCV, una fila por dia (PK: ticker_usd + fecha)
-  fact_income_statement_annual - ingresos/ganancia neta en $ por balance anual (PK: ticker_usd + fecha_balance)
+  fact_income_statement_annual - ingresos, costo de ingresos, beneficio bruto, gastos operativos y
+                                  ganancia neta en $ por balance anual (PK: ticker_usd + fecha_balance)
   fact_eps_trimestral          - EPS estimado/reportado por trimestre, incluye el proximo aun sin reportar (PK: ticker_usd + fecha_reporte)
+  fact_balance_cashflow_annual - deuda total, efectivo y flujo de caja libre por balance anual (PK: ticker_usd + fecha_balance)
 
 listado_cedears.py, analisis_fundamental.py y precios_historicos.py escriben
 cada uno las columnas que les corresponden. dim_empresa se actualiza con
@@ -91,11 +93,14 @@ CREATE TABLE IF NOT EXISTS fact_precios_daily (
 );
 
 CREATE TABLE IF NOT EXISTS fact_income_statement_annual (
-    ticker_usd      VARCHAR,
-    fecha_balance   DATE,
-    ingresos        DOUBLE,
-    ganancia_neta   DOUBLE,
-    margen_neto_pct DOUBLE,
+    ticker_usd         VARCHAR,
+    fecha_balance      DATE,
+    ingresos           DOUBLE,
+    costo_ingresos     DOUBLE,
+    beneficio_bruto    DOUBLE,
+    gastos_operativos  DOUBLE,
+    ganancia_neta      DOUBLE,
+    margen_neto_pct    DOUBLE,
     PRIMARY KEY (ticker_usd, fecha_balance)
 );
 
@@ -107,6 +112,15 @@ CREATE TABLE IF NOT EXISTS fact_eps_trimestral (
     sorpresa_pct  DOUBLE,
     PRIMARY KEY (ticker_usd, fecha_reporte)
 );
+
+CREATE TABLE IF NOT EXISTS fact_balance_cashflow_annual (
+    ticker_usd        VARCHAR,
+    fecha_balance     DATE,
+    deuda_total       DOUBLE,
+    efectivo          DOUBLE,
+    flujo_caja_libre  DOUBLE,
+    PRIMARY KEY (ticker_usd, fecha_balance)
+);
 """
 
 
@@ -117,6 +131,9 @@ def conectar() -> duckdb.DuckDBPyConnection:
     # Migracion idempotente: agrega columnas nuevas a bases ya existentes
     # (CREATE TABLE IF NOT EXISTS no alcanza si la tabla ya existia sin esta columna).
     con.execute("ALTER TABLE fact_metrics_daily ADD COLUMN IF NOT EXISTS shares_outstanding DOUBLE")
+    con.execute("ALTER TABLE fact_income_statement_annual ADD COLUMN IF NOT EXISTS costo_ingresos DOUBLE")
+    con.execute("ALTER TABLE fact_income_statement_annual ADD COLUMN IF NOT EXISTS beneficio_bruto DOUBLE")
+    con.execute("ALTER TABLE fact_income_statement_annual ADD COLUMN IF NOT EXISTS gastos_operativos DOUBLE")
     return con
 
 
@@ -178,12 +195,30 @@ def upsert_fact_metrics_daily(con: duckdb.DuckDBPyConnection, filas: list[dict])
 def upsert_fact_income_statement_annual(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> None:
     if not filas:
         return
-    columnas = ["ticker_usd", "fecha_balance", "ingresos", "ganancia_neta", "margen_neto_pct"]
+    columnas = [
+        "ticker_usd", "fecha_balance", "ingresos", "costo_ingresos", "beneficio_bruto",
+        "gastos_operativos", "ganancia_neta", "margen_neto_pct",
+    ]
     placeholders = ", ".join("?" for _ in columnas)
     actualizaciones = ", ".join(f"{c} = excluded.{c}" for c in columnas if c not in ("ticker_usd", "fecha_balance"))
     con.executemany(
         f"""
         INSERT INTO fact_income_statement_annual ({", ".join(columnas)}) VALUES ({placeholders})
+        ON CONFLICT (ticker_usd, fecha_balance) DO UPDATE SET {actualizaciones}
+        """,
+        [tuple(f.get(c) for c in columnas) for f in filas],
+    )
+
+
+def upsert_fact_balance_cashflow_annual(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> None:
+    if not filas:
+        return
+    columnas = ["ticker_usd", "fecha_balance", "deuda_total", "efectivo", "flujo_caja_libre"]
+    placeholders = ", ".join("?" for _ in columnas)
+    actualizaciones = ", ".join(f"{c} = excluded.{c}" for c in columnas if c not in ("ticker_usd", "fecha_balance"))
+    con.executemany(
+        f"""
+        INSERT INTO fact_balance_cashflow_annual ({", ".join(columnas)}) VALUES ({placeholders})
         ON CONFLICT (ticker_usd, fecha_balance) DO UPDATE SET {actualizaciones}
         """,
         [tuple(f.get(c) for c in columnas) for f in filas],

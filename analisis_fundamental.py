@@ -17,6 +17,12 @@ Ademas trae un snapshot de ratios de valuacion (P/E, PEG, P/B, EV/EBITDA,
 margenes, ROE, ROA, deuda/patrimonio, liquidez, dividendo, beta) para poder
 comparar empresas entre si, no solo en el tiempo.
 
+Tambien persiste series anuales crudas para graficar tendencia real (no solo
+el % de cambio): ingresos/costo de ingresos/beneficio bruto/gastos operativos/
+ganancia neta (income statement), deuda total/efectivo/flujo de caja libre
+(balance sheet + cashflow -- fuentes nuevas), y EPS estimado/reportado por
+trimestre incluyendo el proximo informe (todavia sin reportar).
+
 Usa "ticker_yahoo" de cedears_normalizados.csv (no "ticker_usd") porque IOL y
 Yahoo Finance no siempre usan el mismo simbolo (ver TICKERS_YAHOO en
 listado_cedears.py: BDRs brasileños con ".SA", tickers mal mapeados, etc.)
@@ -121,7 +127,7 @@ COLUMNAS_A_DB = {
 # Sube este numero cada vez que obtener_datos_crudos() empiece a guardar un
 # campo nuevo: invalida el cache viejo (que no lo tiene) sin tener que borrar
 # la carpeta a mano.
-VERSION_CACHE = 4
+VERSION_CACHE = 5
 
 
 def _cache_vigente(path: Path) -> bool:
@@ -153,10 +159,29 @@ def obtener_datos_crudos(ticker: str) -> dict:
         anual = t.income_stmt
         if anual is not None and "Total Revenue" in anual.index:
             datos["ingresos_anuales"] = _serie_a_dict(anual.loc["Total Revenue"])
+        if anual is not None and "Cost Of Revenue" in anual.index:
+            datos["costo_ingresos_anual"] = _serie_a_dict(anual.loc["Cost Of Revenue"])
+        if anual is not None and "Gross Profit" in anual.index:
+            datos["beneficio_bruto_anual"] = _serie_a_dict(anual.loc["Gross Profit"])
+        if anual is not None and "Operating Expense" in anual.index:
+            datos["gastos_operativos_anual"] = _serie_a_dict(anual.loc["Operating Expense"])
         if anual is not None and "Net Income" in anual.index:
             datos["ganancia_anual"] = _serie_a_dict(anual.loc["Net Income"])
         if anual is not None and "Diluted EPS" in anual.index:
             datos["eps_anual"] = _serie_a_dict(anual.loc["Diluted EPS"])
+
+        # Fase B: balance y cashflow -- fuentes nuevas (antes solo pediamos
+        # income_stmt). Deuda/efectivo/FCF son lo que le falta al warehouse
+        # para el grafico "Nivel de deuda y cobertura".
+        balance = t.balance_sheet
+        if balance is not None and "Total Debt" in balance.index:
+            datos["deuda_anual"] = _serie_a_dict(balance.loc["Total Debt"])
+        if balance is not None and "Cash And Cash Equivalents" in balance.index:
+            datos["efectivo_anual"] = _serie_a_dict(balance.loc["Cash And Cash Equivalents"])
+
+        flujo = t.cashflow
+        if flujo is not None and "Free Cash Flow" in flujo.index:
+            datos["fcf_anual"] = _serie_a_dict(flujo.loc["Free Cash Flow"])
 
         earnings = t.earnings_dates
         if earnings is not None and not earnings.empty:
@@ -257,6 +282,7 @@ def main() -> None:
     filas = []
     filas_income_statement = []
     filas_eps = []
+    filas_balance_cashflow = []
     for i, fila_universo in enumerate(universo.itertuples(), 1):
         print(f"[{i}/{len(universo)}] {fila_universo.ticker_yahoo}", end="\r")
         datos = obtener_datos_crudos(fila_universo.ticker_yahoo)
@@ -266,16 +292,35 @@ def main() -> None:
 
         ticker_usd = fila_universo.ticker_usd
         ingresos = datos.get("ingresos_anuales", {})
+        costos = datos.get("costo_ingresos_anual", {})
+        brutos = datos.get("beneficio_bruto_anual", {})
+        gastos = datos.get("gastos_operativos_anual", {})
         ganancias = datos.get("ganancia_anual", {})
-        for fecha_str in set(ingresos) | set(ganancias):
+        fechas_balance = set(ingresos) | set(costos) | set(brutos) | set(gastos) | set(ganancias)
+        for fecha_str in fechas_balance:
             ing, gan = ingresos.get(fecha_str), ganancias.get(fecha_str)
             margen = (gan / ing * 100) if ing not in (None, 0) and gan is not None else None
             filas_income_statement.append({
                 "ticker_usd": ticker_usd,
                 "fecha_balance": datetime.fromisoformat(fecha_str).date(),
                 "ingresos": ing,
+                "costo_ingresos": costos.get(fecha_str),
+                "beneficio_bruto": brutos.get(fecha_str),
+                "gastos_operativos": gastos.get(fecha_str),
                 "ganancia_neta": gan,
                 "margen_neto_pct": round(margen, 1) if margen is not None else None,
+            })
+
+        deudas = datos.get("deuda_anual", {})
+        efectivos = datos.get("efectivo_anual", {})
+        fcfs = datos.get("fcf_anual", {})
+        for fecha_str in set(deudas) | set(efectivos) | set(fcfs):
+            filas_balance_cashflow.append({
+                "ticker_usd": ticker_usd,
+                "fecha_balance": datetime.fromisoformat(fecha_str).date(),
+                "deuda_total": deudas.get(fecha_str),
+                "efectivo": efectivos.get(fecha_str),
+                "flujo_caja_libre": fcfs.get(fecha_str),
             })
 
         for e in datos.get("eps_trimestral", []):
@@ -324,10 +369,12 @@ def main() -> None:
     db.upsert_dim_empresa(con, filas_dim)
     db.upsert_fact_income_statement_annual(con, filas_income_statement)
     db.upsert_fact_eps_trimestral(con, filas_eps)
+    db.upsert_fact_balance_cashflow_annual(con, filas_balance_cashflow)
     con.close()
     print(f"fact_metrics_daily y dim_empresa actualizadas ({len(filas_metrics)} filas, fecha {hoy})")
     print(f"fact_income_statement_annual: {len(filas_income_statement)} filas | "
-          f"fact_eps_trimestral: {len(filas_eps)} filas")
+          f"fact_eps_trimestral: {len(filas_eps)} filas | "
+          f"fact_balance_cashflow_annual: {len(filas_balance_cashflow)} filas")
 
 
 if __name__ == "__main__":
