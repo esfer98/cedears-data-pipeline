@@ -1,17 +1,25 @@
 """
 db.py
 -----
-Warehouse local en DuckDB (un solo archivo, sin servidor) con 3 tablas:
+Warehouse local en DuckDB (un solo archivo, sin servidor) con 5 tablas:
 
-  dim_empresa        - descriptiva, cambia poco (PK: ticker_usd)
-  fact_metrics_daily - ratios de valuacion y momentum, una fila por dia (PK: ticker_usd + fecha)
-  fact_precios_daily - OHLCV, una fila por dia (PK: ticker_usd + fecha)
+  dim_empresa                  - descriptiva, cambia poco (PK: ticker_usd)
+  fact_metrics_daily           - ratios de valuacion y momentum, una fila por dia (PK: ticker_usd + fecha)
+  fact_precios_daily           - OHLCV, una fila por dia (PK: ticker_usd + fecha)
+  fact_income_statement_annual - ingresos/ganancia neta en $ por balance anual (PK: ticker_usd + fecha_balance)
+  fact_eps_trimestral          - EPS estimado/reportado por trimestre, incluye el proximo aun sin reportar (PK: ticker_usd + fecha_reporte)
 
 listado_cedears.py, analisis_fundamental.py y precios_historicos.py escriben
 cada uno las columnas que les corresponden. dim_empresa se actualiza con
 UPSERT que preserva "sector"/"industria"/"pais_origen" (se refrescan) pero
 NUNCA pisa "lynch_category"/"modelo_negocio" una vez que se cargaron a mano
 (esas columnas no forman parte del UPDATE SET del upsert de metricas).
+
+fact_income_statement_annual y fact_eps_trimestral son datos que
+analisis_fundamental.py YA pedia a Yahoo para calcular crecimiento_%/sorpresa_%,
+pero antes se descartaban despues de calcular el derivado. Ahora se persisten
+en crudo tambien, para poder graficar la serie real (ingresos/EPS por año o
+trimestre), no solo el porcentaje de cambio.
 """
 
 from pathlib import Path
@@ -81,6 +89,24 @@ CREATE TABLE IF NOT EXISTS fact_precios_daily (
     volume      BIGINT,
     PRIMARY KEY (ticker_usd, fecha)
 );
+
+CREATE TABLE IF NOT EXISTS fact_income_statement_annual (
+    ticker_usd      VARCHAR,
+    fecha_balance   DATE,
+    ingresos        DOUBLE,
+    ganancia_neta   DOUBLE,
+    margen_neto_pct DOUBLE,
+    PRIMARY KEY (ticker_usd, fecha_balance)
+);
+
+CREATE TABLE IF NOT EXISTS fact_eps_trimestral (
+    ticker_usd    VARCHAR,
+    fecha_reporte DATE,
+    eps_estimado  DOUBLE,
+    eps_reportado DOUBLE,
+    sorpresa_pct  DOUBLE,
+    PRIMARY KEY (ticker_usd, fecha_reporte)
+);
 """
 
 
@@ -144,6 +170,36 @@ def upsert_fact_metrics_daily(con: duckdb.DuckDBPyConnection, filas: list[dict])
         f"""
         INSERT INTO fact_metrics_daily ({", ".join(columnas)}) VALUES ({placeholders})
         ON CONFLICT (ticker_usd, fecha) DO UPDATE SET {actualizaciones}
+        """,
+        [tuple(f.get(c) for c in columnas) for f in filas],
+    )
+
+
+def upsert_fact_income_statement_annual(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> None:
+    if not filas:
+        return
+    columnas = ["ticker_usd", "fecha_balance", "ingresos", "ganancia_neta", "margen_neto_pct"]
+    placeholders = ", ".join("?" for _ in columnas)
+    actualizaciones = ", ".join(f"{c} = excluded.{c}" for c in columnas if c not in ("ticker_usd", "fecha_balance"))
+    con.executemany(
+        f"""
+        INSERT INTO fact_income_statement_annual ({", ".join(columnas)}) VALUES ({placeholders})
+        ON CONFLICT (ticker_usd, fecha_balance) DO UPDATE SET {actualizaciones}
+        """,
+        [tuple(f.get(c) for c in columnas) for f in filas],
+    )
+
+
+def upsert_fact_eps_trimestral(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> None:
+    if not filas:
+        return
+    columnas = ["ticker_usd", "fecha_reporte", "eps_estimado", "eps_reportado", "sorpresa_pct"]
+    placeholders = ", ".join("?" for _ in columnas)
+    actualizaciones = ", ".join(f"{c} = excluded.{c}" for c in columnas if c not in ("ticker_usd", "fecha_reporte"))
+    con.executemany(
+        f"""
+        INSERT INTO fact_eps_trimestral ({", ".join(columnas)}) VALUES ({placeholders})
+        ON CONFLICT (ticker_usd, fecha_reporte) DO UPDATE SET {actualizaciones}
         """,
         [tuple(f.get(c) for c in columnas) for f in filas],
     )

@@ -31,7 +31,7 @@ Correr: python analisis_fundamental.py
 import json
 import re
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -121,7 +121,7 @@ COLUMNAS_A_DB = {
 # Sube este numero cada vez que obtener_datos_crudos() empiece a guardar un
 # campo nuevo: invalida el cache viejo (que no lo tiene) sin tener que borrar
 # la carpeta a mano.
-VERSION_CACHE = 3
+VERSION_CACHE = 4
 
 
 def _cache_vigente(path: Path) -> bool:
@@ -160,12 +160,20 @@ def obtener_datos_crudos(ticker: str) -> dict:
 
         earnings = t.earnings_dates
         if earnings is not None and not earnings.empty:
-            reportados = earnings.dropna(subset=["Reported EPS"]).head(4)
-            datos["sorpresa_eps_pct"] = {
-                str(fecha.date()): float(valor)
-                for fecha, valor in reportados["Surprise(%)"].items()
-                if pd.notna(valor)
-            }
+            # head(5), sin filtrar NaN: yfinance devuelve mas reciente primero,
+            # asi que esto trae el proximo trimestre (todavia sin "Reported EPS")
+            # + los ~4 ya reportados. Filtrar antes perdia la fecha del proximo
+            # informe, que es justo lo que hace falta para "Siguiente: <fecha>".
+            ultimos = earnings.head(5)
+            datos["eps_trimestral"] = [
+                {
+                    "fecha": str(fecha.date()),
+                    "eps_estimado": float(fila["EPS Estimate"]) if pd.notna(fila["EPS Estimate"]) else None,
+                    "eps_reportado": float(fila["Reported EPS"]) if pd.notna(fila["Reported EPS"]) else None,
+                    "sorpresa_pct": float(fila["Surprise(%)"]) if pd.notna(fila["Surprise(%)"]) else None,
+                }
+                for fecha, fila in ultimos.iterrows()
+            ]
 
         info = t.get_info() or {}
         campos_a_guardar = {**CAMPOS_INFO_FRACCION, **CAMPOS_INFO_DIRECTOS, **CAMPOS_INFO_DIMENSION}
@@ -222,7 +230,8 @@ def calcular_momentum(datos: dict) -> dict:
         cagr = _cagr_eps(eps_anual, anios)
         fila[f"eps_growth_{anios}y_%"] = round(cagr, 1) if cagr is not None else None
 
-    sorpresas = list(datos.get("sorpresa_eps_pct", {}).values())
+    reportados = [e for e in datos.get("eps_trimestral", []) if e["eps_reportado"] is not None][:4]
+    sorpresas = [e["sorpresa_pct"] for e in reportados if e["sorpresa_pct"] is not None]
     fila["sorpresa_eps_prom_4q_%"] = round(sum(sorpresas) / len(sorpresas), 1) if sorpresas else None
     fila["trimestres_superando_estimado"] = sum(1 for s in sorpresas if s > 0) if sorpresas else None
 
@@ -246,12 +255,37 @@ def main() -> None:
     universo = pd.read_csv("data/cedears_normalizados.csv")
 
     filas = []
+    filas_income_statement = []
+    filas_eps = []
     for i, fila_universo in enumerate(universo.itertuples(), 1):
         print(f"[{i}/{len(universo)}] {fila_universo.ticker_yahoo}", end="\r")
         datos = obtener_datos_crudos(fila_universo.ticker_yahoo)
         momentum = calcular_momentum(datos)
         momentum["ticker"] = fila_universo.ticker_usd  # el simbolo que se ve en IOL
         filas.append(momentum)
+
+        ticker_usd = fila_universo.ticker_usd
+        ingresos = datos.get("ingresos_anuales", {})
+        ganancias = datos.get("ganancia_anual", {})
+        for fecha_str in set(ingresos) | set(ganancias):
+            ing, gan = ingresos.get(fecha_str), ganancias.get(fecha_str)
+            margen = (gan / ing * 100) if ing not in (None, 0) and gan is not None else None
+            filas_income_statement.append({
+                "ticker_usd": ticker_usd,
+                "fecha_balance": datetime.fromisoformat(fecha_str).date(),
+                "ingresos": ing,
+                "ganancia_neta": gan,
+                "margen_neto_pct": round(margen, 1) if margen is not None else None,
+            })
+
+        for e in datos.get("eps_trimestral", []):
+            filas_eps.append({
+                "ticker_usd": ticker_usd,
+                "fecha_reporte": datetime.fromisoformat(e["fecha"]).date(),
+                "eps_estimado": e["eps_estimado"],
+                "eps_reportado": e["eps_reportado"],
+                "sorpresa_pct": e["sorpresa_pct"],
+            })
     print()
 
     resultado = pd.DataFrame(filas).merge(
@@ -288,8 +322,12 @@ def main() -> None:
     con = db.conectar()
     db.upsert_fact_metrics_daily(con, filas_metrics)
     db.upsert_dim_empresa(con, filas_dim)
+    db.upsert_fact_income_statement_annual(con, filas_income_statement)
+    db.upsert_fact_eps_trimestral(con, filas_eps)
     con.close()
     print(f"fact_metrics_daily y dim_empresa actualizadas ({len(filas_metrics)} filas, fecha {hoy})")
+    print(f"fact_income_statement_annual: {len(filas_income_statement)} filas | "
+          f"fact_eps_trimestral: {len(filas_eps)} filas")
 
 
 if __name__ == "__main__":
