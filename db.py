@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS fact_metrics_daily (
     beta                            DOUBLE,
     insider_holding_pct             DOUBLE,
     institutional_holding_pct       DOUBLE,
+    shares_outstanding              DOUBLE,
     PRIMARY KEY (ticker_usd, fecha)
 );
 
@@ -87,6 +88,9 @@ def conectar() -> duckdb.DuckDBPyConnection:
     DB_PATH.parent.mkdir(exist_ok=True)
     con = duckdb.connect(str(DB_PATH))
     con.execute(ESQUEMA)
+    # Migracion idempotente: agrega columnas nuevas a bases ya existentes
+    # (CREATE TABLE IF NOT EXISTS no alcanza si la tabla ya existia sin esta columna).
+    con.execute("ALTER TABLE fact_metrics_daily ADD COLUMN IF NOT EXISTS shares_outstanding DOUBLE")
     return con
 
 
@@ -132,6 +136,7 @@ def upsert_fact_metrics_daily(con: duckdb.DuckDBPyConnection, filas: list[dict])
         "ev_ebitda", "margen_bruto_pct", "margen_operativo_pct", "margen_neto_pct",
         "roe_pct", "roa_pct", "deuda_patrimonio", "razon_corriente", "dividend_yield_pct",
         "payout_ratio_pct", "beta", "insider_holding_pct", "institutional_holding_pct",
+        "shares_outstanding",
     ]
     placeholders = ", ".join("?" for _ in columnas)
     actualizaciones = ", ".join(f"{c} = excluded.{c}" for c in columnas if c not in ("ticker_usd", "fecha"))

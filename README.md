@@ -31,7 +31,13 @@ flowchart LR
         fp[("fact_precios_daily")]
     end
 
-    subgraph Consumo["Gold / Consumo"]
+    subgraph Gold["Gold — una metodologia por archivo, columnas prefijadas"]
+        lynch["gold/lynch.py<br/>vista gold_lynch (columnas lynch_*)"]
+        quant["gold/quant.py (futuro)"]
+        tech["gold/technical.py (futuro)"]
+    end
+
+    subgraph Consumo
         nb["notebooks/eda_cedears.ipynb"]
     end
 
@@ -41,14 +47,21 @@ flowchart LR
     cache --> fund --> db
     cache --> precios --> db
     db --> dim & fm & fp
+    dim & fm & fp --> lynch & quant & tech
     dim & fm & fp --> nb
+    lynch --> nb
 ```
 
 **Estado actual:** Transform y Load viven juntos, en Python (pandas), dentro de
 cada script de Extract — es un ETL clásico, no ELT. **Roadmap:** migrar
 Transform a modelos de `dbt` (dbt-duckdb) para separarlo de Extract y sumar
-tests/documentación/lineage automático, y agregar una capa Gold real (vistas
-SQL para screens) en vez de recalcular todo en cada notebook.
+tests/documentación/lineage automático.
+
+**Gold ya es real** (no vistas de ejemplo): cada metodología de análisis
+(Lynch, y a futuro quant/técnico) vive en su propio archivo dentro de `gold/`,
+crea su propia vista SQL en el warehouse, y prefija todas sus columnas
+(`lynch_*`) — así conviven varias metodologías sobre las mismas empresas sin
+que una le pise las columnas a otra.
 
 ## Arquitectura de datos
 
@@ -76,15 +89,27 @@ sí acumula historial real (no pisa el día anterior).
 python listado_cedears.py       # 1. Universo IOL -> dim_empresa (identidad)
 python analisis_fundamental.py  # 2. Yahoo -> fact_metrics_daily + sector/industria en dim_empresa
 python precios_historicos.py    # 3. Yahoo -> fact_precios_daily (OHLCV, 5 años)
+python gold/lynch.py            # 4. Crea/actualiza la vista gold_lynch (no pide datos nuevos)
 ```
 
 `listado_cedears.py` tiene que correr primero: los otros dos leen
 `data/cedears_normalizados.csv` (el universo + el mapeo de ticker de IOL al
-ticker real de Yahoo) para saber qué pedirle a Yahoo.
+ticker real de Yahoo) para saber qué pedirle a Yahoo. `gold/lynch.py` corre
+al final porque solo lee lo que ya está en el warehouse — no llama a IOL ni a
+Yahoo.
+
+### Agregar una metodología nueva en `gold/`
+
+Cada archivo en `gold/` es independiente: crea su propia vista con
+`CREATE OR REPLACE VIEW`, lee de `dim_empresa`/`fact_*` y prefija **todas**
+sus columnas de salida (`lynch_*`, y a futuro `quant_*`, `technical_*`) para
+que nunca choquen entre sí ni con las columnas de otra metodología. Para
+importar `db.py` (vive en la raíz) desde `gold/`, cada script agrega la raíz
+del proyecto a `sys.path` al principio — ver el encabezado de `gold/lynch.py`.
 
 ## Estructura
 ```
-cedears-screener/
+cedears-data-pipeline/
 ├── .env.example           # plantilla de credenciales (copiar a .env)
 ├── .gitignore
 ├── requirements.txt
@@ -93,8 +118,10 @@ cedears-screener/
 ├── listado_cedears.py      # universo IOL -> dim_empresa + cedears_normalizados.csv
 ├── analisis_fundamental.py # momentum + ratios de Yahoo -> fact_metrics_daily
 ├── precios_historicos.py   # OHLCV de Yahoo -> fact_precios_daily
+├── gold/                   # una metodologia de analisis = un archivo, columnas prefijadas
+│   └── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)
 ├── notebooks/
-│   └── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios)
+│   └── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch)
 ├── cache/                  # cache en disco por ticker (evita re-pedirle a Yahoo)
 └── data/                   # se genera solo: CSVs + warehouse.duckdb
 ```
@@ -137,6 +164,7 @@ registrado como "Python 3 (.venv)" — si VS Code no lo detecta solo, `Ctrl+Shif
    python listado_cedears.py
    python analisis_fundamental.py
    python precios_historicos.py
+   python gold/lynch.py
    ```
 
 ## Notas

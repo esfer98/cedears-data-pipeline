@@ -79,6 +79,7 @@ CAMPOS_INFO_DIRECTOS = {
     "currentRatio": "razon_corriente",
     "dividendYield": "dividend_yield_%",
     "beta": "beta",
+    "sharesOutstanding": "shares_outstanding",
 }
 # Estos van a dim_empresa (descriptivos), no a fact_metrics_daily.
 CAMPOS_INFO_DIMENSION = {"sector": "sector", "industry": "industria", "country": "pais_origen"}
@@ -113,13 +114,14 @@ COLUMNAS_A_DB = {
     "beta": "beta",
     "insider_holding_%": "insider_holding_pct",
     "institutional_holding_%": "institutional_holding_pct",
+    "shares_outstanding": "shares_outstanding",
 }
 
 
 # Sube este numero cada vez que obtener_datos_crudos() empiece a guardar un
 # campo nuevo: invalida el cache viejo (que no lo tiene) sin tener que borrar
 # la carpeta a mano.
-VERSION_CACHE = 2
+VERSION_CACHE = 3
 
 
 def _cache_vigente(path: Path) -> bool:
