@@ -173,6 +173,13 @@ def listar_empresas(iol: IOLClient) -> pd.DataFrame:
 
 
 def main() -> None:
+    con_check = db.conectar()
+    ya_corrio = db.ya_corrio_hoy(con_check, "listado_cedears")
+    con_check.close()
+    if ya_corrio:
+        print("listado_cedears ya corrio hoy con exito, no hace falta repetir.")
+        return
+
     iol = IOLClient()
     iol.login()
     print("Ingreso a IOL: OK\n")
@@ -189,7 +196,9 @@ def main() -> None:
     print(f"\nListado guardado en {destino}")
 
     con = db.conectar()
-    db.upsert_dim_empresa(con, empresas.to_dict("records"))
+    with db.registrar(con, "listado_cedears") as log:
+        db.upsert_dim_empresa(con, empresas.to_dict("records"))
+        log["filas_afectadas"] = len(empresas)
     con.close()
     print("dim_empresa actualizada en data/warehouse.duckdb")
 

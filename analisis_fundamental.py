@@ -277,6 +277,13 @@ def calcular_momentum(datos: dict) -> dict:
 
 
 def main() -> None:
+    con_check = db.conectar()
+    ya_corrio = db.ya_corrio_hoy(con_check, "analisis_fundamental")
+    con_check.close()
+    if ya_corrio:
+        print("analisis_fundamental ya corrio hoy con exito, no hace falta repetir.")
+        return
+
     universo = pd.read_csv("data/cedears_normalizados.csv")
 
     filas = []
@@ -365,11 +372,13 @@ def main() -> None:
     ).to_dict("records")
 
     con = db.conectar()
-    db.upsert_fact_metrics_daily(con, filas_metrics)
-    db.upsert_dim_empresa(con, filas_dim)
-    db.upsert_fact_income_statement_annual(con, filas_income_statement)
-    db.upsert_fact_eps_trimestral(con, filas_eps)
-    db.upsert_fact_balance_cashflow_annual(con, filas_balance_cashflow)
+    with db.registrar(con, "analisis_fundamental") as log:
+        db.upsert_fact_metrics_daily(con, filas_metrics)
+        db.upsert_dim_empresa(con, filas_dim)
+        db.upsert_fact_income_statement_annual(con, filas_income_statement)
+        db.upsert_fact_eps_trimestral(con, filas_eps)
+        db.upsert_fact_balance_cashflow_annual(con, filas_balance_cashflow)
+        log["filas_afectadas"] = len(filas_metrics)
     con.close()
     print(f"fact_metrics_daily y dim_empresa actualizadas ({len(filas_metrics)} filas, fecha {hoy})")
     print(f"fact_income_statement_annual: {len(filas_income_statement)} filas | "

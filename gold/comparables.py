@@ -101,7 +101,9 @@ def pares_similares(con, ticker_usd: str, n: int = 5):
 
 def main() -> None:
     con = db.conectar()
-    con.execute(SQL_VISTA)
+    with db.registrar(con, "gold_comparables") as log:
+        con.execute(SQL_VISTA)
+        log["filas_afectadas"] = con.execute("SELECT COUNT(*) FROM gold_comparables").fetchone()[0]
 
     tickers = sys.argv[1:] or ["NU", "META"]
     for ticker in tickers:

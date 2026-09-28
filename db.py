@@ -24,6 +24,8 @@ en crudo tambien, para poder graficar la serie real (ingresos/EPS por año o
 trimestre), no solo el porcentaje de cambio.
 """
 
+from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 import duckdb
@@ -120,6 +122,22 @@ CREATE TABLE IF NOT EXISTS fact_balance_cashflow_annual (
     efectivo          DOUBLE,
     flujo_caja_libre  DOUBLE,
     PRIMARY KEY (ticker_usd, fecha_balance)
+);
+
+-- Log append-only (sin PK a proposito): cada corrida de cada script deja una
+-- fila. Sirve para tres cosas: (1) idempotencia -- no repetir un job que ya
+-- corrio hoy si el catch-up de Task Scheduler dispara dos veces el mismo dia,
+-- (2) tablero de salud -- ver de un vistazo hace cuanto no corre cada pieza
+-- sin tener que acordarse de mirarlo (nos paso de verdad con la rotacion del
+-- certificado de Norton, que rompio el pipeline sin aviso), (3) diagnostico
+-- -- el error queda guardado, no hay que rescatarlo de la terminal.
+CREATE TABLE IF NOT EXISTS log_ejecuciones (
+    script          VARCHAR,
+    inicio          TIMESTAMP,
+    fin             TIMESTAMP,
+    estado          VARCHAR,  -- 'ok' | 'error'
+    filas_afectadas INTEGER,
+    error_detalle   VARCHAR
 );
 """
 
@@ -238,6 +256,65 @@ def upsert_fact_eps_trimestral(con: duckdb.DuckDBPyConnection, filas: list[dict]
         """,
         [tuple(f.get(c) for c in columnas) for f in filas],
     )
+
+
+@contextmanager
+def registrar(con: duckdb.DuckDBPyConnection, script: str):
+    """Envuelve el trabajo de un script y deja una fila en log_ejecuciones al
+    terminar, 'ok' o 'error' segun corresponda -- incluido el mensaje de la
+    excepcion si fallo. Vuelve a lanzar la excepcion (para que el proceso
+    termine con codigo de error y Task Scheduler lo detecte como fallido).
+
+    Uso:
+        with db.registrar(con, "analisis_fundamental") as log:
+            ...hacer el trabajo...
+            log["filas_afectadas"] = len(filas_metrics)
+    """
+    inicio = datetime.now()
+    info = {"filas_afectadas": None}
+    try:
+        yield info
+    except Exception as e:
+        con.execute(
+            "INSERT INTO log_ejecuciones (script, inicio, fin, estado, filas_afectadas, error_detalle) "
+            "VALUES (?, ?, ?, 'error', ?, ?)",
+            [script, inicio, datetime.now(), info["filas_afectadas"], str(e)],
+        )
+        raise
+    else:
+        con.execute(
+            "INSERT INTO log_ejecuciones (script, inicio, fin, estado, filas_afectadas, error_detalle) "
+            "VALUES (?, ?, ?, 'ok', ?, NULL)",
+            [script, inicio, datetime.now(), info["filas_afectadas"]],
+        )
+
+
+def ya_corrio_hoy(con: duckdb.DuckDBPyConnection, script: str) -> bool:
+    """True si `script` ya tuvo una corrida exitosa hoy. Para la guarda de
+    idempotencia: si Task Scheduler dispara un catch-up (PC apagada a la hora
+    programada, corre al prenderla) y el job normal de esa misma noche ya
+    habia corrido bien, no tiene sentido repetirlo y gastar cupo de API."""
+    fila = con.execute(
+        "SELECT COUNT(*) FROM log_ejecuciones "
+        "WHERE script = ? AND estado = 'ok' AND CAST(inicio AS DATE) = CURRENT_DATE",
+        [script],
+    ).fetchone()
+    return fila[0] > 0
+
+
+def estado_pipeline(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    """Ultima corrida (ok o no) de cada script -- el tablero de salud del
+    pipeline completo en una sola consulta."""
+    return con.execute("""
+        SELECT
+            script,
+            MAX(inicio) AS ultima_corrida,
+            MAX(inicio) FILTER (WHERE estado = 'ok') AS ultima_corrida_ok,
+            COUNT(*) FILTER (WHERE estado = 'error') AS errores_totales
+        FROM log_ejecuciones
+        GROUP BY script
+        ORDER BY script
+    """).fetchdf()
 
 
 def upsert_fact_precios_daily(con: duckdb.DuckDBPyConnection, precios: pd.DataFrame) -> None:

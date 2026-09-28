@@ -156,7 +156,9 @@ FROM base
 
 def main() -> None:
     con = db.conectar()
-    con.execute(SQL_VISTA)
+    with db.registrar(con, "gold_lynch") as log:
+        con.execute(SQL_VISTA)
+        log["filas_afectadas"] = con.execute("SELECT COUNT(*) FROM gold_lynch").fetchone()[0]
 
     print("=== Distribucion por categoria Lynch (automatica) ===")
     print(con.execute("""

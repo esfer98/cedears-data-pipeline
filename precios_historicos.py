@@ -47,6 +47,13 @@ def obtener_precios(ticker: str) -> pd.DataFrame:
 
 
 def main() -> None:
+    con_check = db.conectar()
+    ya_corrio = db.ya_corrio_hoy(con_check, "precios_historicos")
+    con_check.close()
+    if ya_corrio:
+        print("precios_historicos ya corrio hoy con exito, no hace falta repetir.")
+        return
+
     universo = pd.read_csv("data/cedears_normalizados.csv")
 
     series = []
@@ -82,7 +89,9 @@ def main() -> None:
     precios_db["fecha"] = pd.to_datetime(precios_db["Date"], utc=True).dt.date
 
     con = db.conectar()
-    db.upsert_fact_precios_daily(con, precios_db)
+    with db.registrar(con, "precios_historicos") as log:
+        db.upsert_fact_precios_daily(con, precios_db)
+        log["filas_afectadas"] = len(precios_db)
     con.close()
     print(f"fact_precios_daily actualizada ({len(precios_db)} filas)")
 

@@ -87,10 +87,18 @@ modelo dimensional:
 - **`fact_eps_trimestral`** — EPS estimado/reportado por trimestre (PK
   `ticker_usd` + `fecha_reporte`), incluye el **próximo** informe (todavía
   sin `eps_reportado`) para saber cuándo es el próximo reporte.
+- **`fact_balance_cashflow_annual`** — deuda total, efectivo y flujo de caja
+  libre por balance anual (PK `ticker_usd` + `fecha_balance`).
+- **`log_ejecuciones`** — append-only, una fila por corrida de cada script
+  (`ok`/`error`, cuántas filas afectó, y el detalle si falló). Sirve para
+  tres cosas: idempotencia (no repetir un job que ya corrió hoy si el
+  catch-up de Task Scheduler dispara dos veces el mismo día), tablero de
+  salud (`python estado_pipeline.py`), y diagnóstico (el error queda
+  guardado, no hay que rescatarlo de la terminal).
 
-Cada tabla se carga con `UPSERT` (`ON CONFLICT ... DO UPDATE`), así que correr
-un script dos veces el mismo día no duplica filas, y correrlo días distintos
-sí acumula historial real (no pisa el día anterior).
+Cada tabla de datos se carga con `UPSERT` (`ON CONFLICT ... DO UPDATE`), así
+que correr un script dos veces el mismo día no duplica filas, y correrlo días
+distintos sí acumula historial real (no pisa el día anterior).
 
 ## Orden de ejecución
 
@@ -107,6 +115,31 @@ python gold/comparables.py      # 5. Crea/actualiza la vista gold_comparables (i
 ticker real de Yahoo) para saber qué pedirle a Yahoo. `gold/lynch.py` corre
 al final porque solo lee lo que ya está en el warehouse — no llama a IOL ni a
 Yahoo.
+
+Todos los scripts (menos las vistas `gold/`) chequean `db.ya_corrio_hoy()` al
+arrancar y no repiten el trabajo si ya corrieron con éxito hoy — pensado para
+que un catch-up de Task Scheduler (PC apagada a la hora programada, corre al
+prenderla) no dispare una segunda corrida redundante el mismo día.
+
+### Cadencia (pensada para Task Scheduler, todavía no configurado)
+
+No todo necesita correr con la misma frecuencia — depende de qué tan rápido
+cambia cada fuente:
+
+| Cadencia | Qué corre | Por qué |
+|---|---|---|
+| Diaria (~20:00 ART) | `precios_historicos.py` | El precio cambia todos los días hábiles |
+| Diaria (~20:00 ART) | `analisis_fundamental.py` — parte liviana (`.info`) | Ratios como P/E se mueven con el precio, aunque la empresa no cambie |
+| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
+| Semanal (domingos ~20:00 ART) | `listado_cedears.py` | El universo de CEDEARs rara vez cambia |
+| Semanal (domingos ~20:00 ART) | `analisis_fundamental.py` — parte pesada (income statement, balance, cashflow, earnings) | Los balances solo cambian ~4 veces al año |
+| Mensual | Nada automatizado todavía | Reservado para revisión manual de `lynch_category`/`modelo_negocio` |
+
+20:00 ART queda después del cierre de BYMA (17:00) y de NYSE/NASDAQ (17:00–18:00
+ART según horario de verano en EE.UU.), con margen para que Yahoo termine de
+asentar el dato del día. La separación liviana/pesada de `analisis_fundamental.py`
+en dos cadencias todavía no está implementada — hoy el script hace las 5
+llamadas cada vez que corre.
 
 ### Agregar una metodología nueva en `gold/`
 
@@ -128,6 +161,7 @@ cedears-data-pipeline/
 ├── listado_cedears.py      # universo IOL -> dim_empresa + cedears_normalizados.csv
 ├── analisis_fundamental.py # momentum + ratios de Yahoo -> fact_metrics_daily + series crudas (income statement, EPS)
 ├── precios_historicos.py   # OHLCV de Yahoo -> fact_precios_daily
+├── estado_pipeline.py      # tablero de salud: ultima corrida (ok/error) de cada script
 ├── gold/                   # una metodologia de analisis = un archivo, columnas prefijadas
 │   ├── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)
 │   └── comparables.py      # vista gold_comparables (empresa vs. mediana de su sector + pares similares)
