@@ -39,7 +39,13 @@ WITH ultimo AS (
 ),
 base AS (
     SELECT
-        u.*, d.nombre_empresa, d.sector, d.industria, d.mercado,
+        u.*, d.nombre_empresa,
+        -- COALESCE con sector_corregido: Yahoo clasifica mal algunos casos
+        -- (ej. procesadoras de pago como "Technology"), ver correcciones_sector.py.
+        -- Sin esto, STNE/PAGS/XYZ se comparaban contra la mediana de software
+        -- de alto multiplo en vez de contra sus competidores reales (PYPL/MA/V).
+        COALESCE(d.sector_corregido, d.sector) AS sector,
+        d.industria, d.mercado,
         -- market_cap viene en la moneda de cotizacion de Yahoo, no siempre
         -- USD: acciones argentinas (.BA) cotizan en ARS, BDRs brasileños
         -- (.SA) en BRL. Los ratios (P/E, margenes, ROE, crecimiento) son
@@ -50,7 +56,7 @@ base AS (
             AS comp_moneda
     FROM ultimo u
     JOIN dim_empresa d USING (ticker_usd)
-    WHERE d.sector IS NOT NULL
+    WHERE COALESCE(d.sector_corregido, d.sector) IS NOT NULL
 ),
 sector_stats AS (
     SELECT

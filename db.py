@@ -17,8 +17,14 @@ listado_cedears.py, analisis_fundamental_liviano.py/_pesado.py,
 precios_historicos.py y macro_diario.py escriben cada uno las columnas/tablas
 que les corresponden. dim_empresa se actualiza con UPSERT que preserva
 "sector"/"industria"/"pais_origen" (se refrescan) pero NUNCA pisa
-"lynch_category"/"modelo_negocio" una vez que se cargaron a mano (esas
-columnas no forman parte del UPDATE SET del upsert de metricas).
+"lynch_category"/"modelo_negocio"/"sector_corregido" una vez que se cargaron
+a mano (esas columnas no forman parte del UPDATE SET del upsert de
+metricas). sector_corregido lo carga correcciones_sector.py cuando la
+clasificacion GICS automatica de Yahoo no refleja el negocio real (ej.
+procesadoras de pago clasificadas como "Technology"); gold/lynch.py y
+gold/comparables.py usan COALESCE(sector_corregido, sector) para agrupar,
+asi que la correccion se propaga a toda la capa Gold sin perder el dato
+crudo de Yahoo.
 
 fact_income_statement_annual y fact_eps_trimestral son datos que
 analisis_fundamental_pesado.py YA pedia a Yahoo para calcular
@@ -45,19 +51,20 @@ DB_PATH = Path("data/warehouse.duckdb")
 
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS dim_empresa (
-    ticker_usd      VARCHAR PRIMARY KEY,
-    ticker_cedear   VARCHAR,
-    ticker_yahoo    VARCHAR,
-    ticker_adr_usa  VARCHAR,
-    mercado         VARCHAR,
-    nombre_empresa  VARCHAR,
-    sector          VARCHAR,
-    industria       VARCHAR,
-    pais_origen     VARCHAR,
-    modelo_negocio  VARCHAR,
-    lynch_category  VARCHAR,
-    variantes       VARCHAR,
-    actualizado_en  TIMESTAMP
+    ticker_usd       VARCHAR PRIMARY KEY,
+    ticker_cedear    VARCHAR,
+    ticker_yahoo     VARCHAR,
+    ticker_adr_usa   VARCHAR,
+    mercado          VARCHAR,
+    nombre_empresa   VARCHAR,
+    sector           VARCHAR,  -- crudo, tal cual lo clasifica Yahoo (GICS) -- se refresca solo
+    sector_corregido VARCHAR,  -- override manual cuando Yahoo clasifica mal (ver correcciones_sector.py) -- NUNCA se pisa con upsert automatico
+    industria        VARCHAR,
+    pais_origen      VARCHAR,
+    modelo_negocio   VARCHAR,
+    lynch_category   VARCHAR,
+    variantes        VARCHAR,
+    actualizado_en   TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS fact_metrics_daily (
@@ -171,6 +178,7 @@ def conectar() -> duckdb.DuckDBPyConnection:
     con.execute("ALTER TABLE fact_income_statement_annual ADD COLUMN IF NOT EXISTS beneficio_bruto DOUBLE")
     con.execute("ALTER TABLE fact_income_statement_annual ADD COLUMN IF NOT EXISTS gastos_operativos DOUBLE")
     con.execute("ALTER TABLE dim_empresa ADD COLUMN IF NOT EXISTS ticker_adr_usa VARCHAR")
+    con.execute("ALTER TABLE dim_empresa ADD COLUMN IF NOT EXISTS sector_corregido VARCHAR")
     return con
 
 
@@ -203,6 +211,22 @@ def upsert_dim_empresa(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> Non
              f.get("pais_origen"), f["variantes"])
             for f in filas
         ],
+    )
+
+
+def aplicar_correcciones_sector(con: duckdb.DuckDBPyConnection, correcciones: list[dict]) -> None:
+    """Carga dim_empresa.sector_corregido a mano, para los casos donde la
+    clasificacion GICS automatica de Yahoo no refleja el negocio real (ej.
+    procesadoras de pago clasificadas como "Technology" en vez de "Financial
+    Services"). Mismo criterio que lynch_category/modelo_negocio: se corrige
+    aca, a mano, y analisis_fundamental_liviano.py NUNCA la pisa (no forma
+    parte del UPDATE SET de upsert_dim_empresa) aunque el "sector" crudo de
+    Yahoo se siga refrescando solo."""
+    if not correcciones:
+        return
+    con.executemany(
+        "UPDATE dim_empresa SET sector_corregido = ? WHERE ticker_usd = ?",
+        [(c["sector_corregido"], c["ticker_usd"]) for c in correcciones],
     )
 
 

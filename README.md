@@ -98,9 +98,12 @@ Warehouse local en `data/warehouse.duckdb` (un solo archivo, sin servidor),
 modelo dimensional:
 
 - **`dim_empresa`** — descriptiva, cambia poco (PK `ticker_usd`): identidad
-  (tickers, mercado), `sector`/`industria`/`pais_origen` (de Yahoo), y
-  `lynch_category`/`modelo_negocio` (clasificación manual/asistida por LLM,
-  pendiente — ningún proveedor de datos la da gratis).
+  (tickers, mercado), `sector`/`industria`/`pais_origen` (de Yahoo),
+  `sector_corregido` (override manual cuando Yahoo clasifica mal — ver
+  `correcciones_sector.py` — nunca se pisa con el upsert automático, mismo
+  criterio que lo de abajo), y `lynch_category`/`modelo_negocio`
+  (clasificación manual/asistida por LLM, pendiente — ningún proveedor de
+  datos la da gratis).
 - **`fact_metrics_daily`** — un snapshot por día (PK `ticker_usd` + `fecha`):
   crecimiento de ingresos/ganancia, aceleración, CAGR de EPS, sorpresas de
   EPS, y todos los ratios de valuación (P/E, PEG, P/B, EV/EBITDA, márgenes,
@@ -188,6 +191,20 @@ cambia cada fuente:
 ART según horario de verano en EE.UU.), con margen para que Yahoo termine de
 asentar el dato del día.
 
+### Corregir una clasificación de sector mal hecha por Yahoo
+
+Yahoo clasifica por GICS, y a veces se equivoca para el negocio real de una
+empresa (ej. STNE/PAGS/XYZ son procesadoras de pago, pero Yahoo las mete en
+"Technology" — deforma las medianas de `gold_comparables` y la regla de
+"Ciclica" de `gold_lynch`, que agrupan/filtran por sector). Para corregir un
+caso nuevo: agregar un dict a `CORRECCIONES` en `correcciones_sector.py`
+(ticker, sector correcto, motivo) y correr `python correcciones_sector.py`
+una vez. Queda en `dim_empresa.sector_corregido`, que **nunca** se pisa con
+el upsert automático — `gold/lynch.py` y `gold/comparables.py` ya usan
+`COALESCE(sector_corregido, sector)`, así que la corrección se propaga sola
+a toda la capa Gold sin perder el dato crudo de Yahoo. No es parte de la
+cadencia diaria/semanal — se corre a mano cuando aparece un caso nuevo.
+
 ### Agregar una metodología nueva en `gold/`
 
 Cada archivo en `gold/` es independiente: crea su propia vista con
@@ -210,6 +227,7 @@ cedears-data-pipeline/
 ├── analisis_fundamental_pesado.py   # income statement/balance/cashflow/earnings de Yahoo (semanal) -> momentum + series crudas
 ├── precios_historicos.py   # OHLCV de Yahoo -> fact_precios_daily
 ├── macro_diario.py         # tasas/VIX/FX/commodities/indices de Yahoo -> fact_macro_daily
+├── correcciones_sector.py  # override manual de sector cuando Yahoo clasifica mal -> dim_empresa.sector_corregido
 ├── estado_pipeline.py      # tablero de salud: ultima corrida (ok/error) de cada script
 ├── gold/                   # una metodologia de analisis = un archivo, columnas prefijadas
 │   ├── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)

@@ -83,7 +83,11 @@ primero AS (
 base AS (
     SELECT
         u.*,
-        d.nombre_empresa, d.sector, d.industria, d.pais_origen, d.mercado,
+        d.nombre_empresa,
+        -- COALESCE con sector_corregido: Yahoo clasifica mal algunos casos
+        -- (ej. procesadoras de pago como "Technology"), ver correcciones_sector.py.
+        COALESCE(d.sector_corregido, d.sector) AS sector,
+        d.industria, d.pais_origen, d.mercado,
         d.lynch_category AS lynch_categoria_manual, d.modelo_negocio,
         p.fecha_primera, p.shares_outstanding_primera
     FROM ultimo u
