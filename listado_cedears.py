@@ -1,10 +1,16 @@
 """
 listado_cedears.py
 -------------------
-Lista de empresas con CEDEAR en Argentina, una fila por empresa (sin repetir
-las variantes de liquidacion: pesos / "C" / "D" son el mismo papel).
+Universo completo de activos a trackear, una fila por empresa/activo (sin
+repetir las variantes de liquidacion: pesos / "C" / "D" son el mismo papel).
+Tres fuentes, tres "mercado" distintos en dim_empresa:
 
-Sirve para corroborar rapido si existe CEDEAR de una accion antes de
+  1. CEDEARs (usa_otros / brasil) -- empresas extranjeras operables via IOL.
+  2. Acciones argentinas locales (argentina_local) -- panel Merval y afines
+     de IOL, no son CEDEARs, son las empresas argentinas en si.
+  3. Cripto (cripto) -- BTC/ETH/SOL, fijos, sin pasar por IOL.
+
+Sirve para corroborar rapido si existe CEDEAR/accion local de algo antes de
 analizarla con datos de la bolsa de EE.UU.
 
 Correr:  python listado_cedears.py
@@ -125,10 +131,13 @@ def unir_claves_truncadas(claves: list[str]) -> dict[str, str]:
     return {c: encontrar(c) for c in unicas}
 
 
-def listar_empresas(iol: IOLClient) -> pd.DataFrame:
-    """Trae el panel de CEDEARs y lo reduce a una fila por empresa.
+def _deduplicar_por_empresa(titulos: list[dict]) -> pd.DataFrame:
+    """A partir de titulos de IOL (con 'simbolo' y 'descripcion'), devuelve una
+    fila por empresa: el simbolo mas corto del grupo como representante, el
+    nombre mas largo/completo, y todas las variantes. Compartido entre
+    CEDEARs y acciones argentinas -- misma logica de deduplicacion (la
+    liquidacion en pesos/"C"/"D" es el mismo papel).
 
-    Cada empresa suele tener 2 o 3 simbolos (liquidacion en pesos, "C" y "D").
     Se usa la descripcion (no el simbolo) para agrupar, porque IOL arma los
     simbolos de forma inconsistente: p.ej. BA/BAC/BAD son las 3 variantes de
     Boeing, mientras que BA.C/BA.CC/BA.CD son las de Bank of America.
@@ -140,10 +149,7 @@ def listar_empresas(iol: IOLClient) -> pd.DataFrame:
     Esos son errores de tipeo en el dato fuente, no algo que se pueda arreglar
     de forma generica sin una tabla de alias a mano.
     """
-    panel = iol.cedears_panel()
-    df = pd.DataFrame(panel["titulos"])
-    df = df[~df["descripcion"].str.contains(PATRON_ETF, regex=True, na=False)]
-
+    df = pd.DataFrame(titulos)
     df["empresa"] = df["descripcion"].apply(normalizar_empresa)
     df["clave"] = df["empresa"].apply(clave_agrupacion)
 
@@ -154,22 +160,101 @@ def listar_empresas(iol: IOLClient) -> pd.DataFrame:
     for _, grupo in df.groupby("grupo"):
         nombre = grupo.loc[grupo["empresa"].str.len().idxmax(), "empresa"]
         principal = grupo.assign(_len=grupo["simbolo"].str.len()).sort_values("_len").iloc[0]
-        ticker = principal["simbolo"]
+        filas.append({
+            "ticker": principal["simbolo"],
+            "empresa": nombre,
+            "variantes": ", ".join(sorted(grupo["simbolo"])),
+        })
+    return pd.DataFrame(filas)
 
-        if es_duplicado(ticker):
-            continue
 
-        variantes = sorted(grupo["simbolo"])
+def listar_empresas(iol: IOLClient) -> pd.DataFrame:
+    """Panel de CEDEARs, una fila por empresa."""
+    panel = iol.cedears_panel()
+    titulos = [t for t in panel["titulos"] if not PATRON_ETF.search(t.get("descripcion") or "")]
+    dedup = _deduplicar_por_empresa(titulos)
+    dedup = dedup[~dedup["ticker"].apply(es_duplicado)]
+
+    filas = []
+    for _, row in dedup.iterrows():
+        ticker = row["ticker"]
         filas.append({
             "ticker_usd": ticker,
             "ticker_cedear": ticker,  # en BYMA usan la misma base
             "ticker_yahoo": TICKERS_YAHOO.get(ticker, ticker),
+            "ticker_adr_usa": None,
             "mercado": clasificar_mercado(ticker),
-            "nombre_empresa": nombre.title(),
-            "variantes": ", ".join(variantes),
+            "nombre_empresa": row["empresa"].title(),
+            "variantes": row["variantes"],
         })
 
     return pd.DataFrame(filas).sort_values("nombre_empresa").reset_index(drop=True)
+
+
+PANELES_ARGENTINA = ["Merval", "Panel General", "Merval 25", "Merval Argentina", "Burcap"]
+
+# De las acciones argentinas locales, estas 13 ademas cotizan como ADR
+# directo en EE.UU. (mas liquido, en dolares) -- confirmado a mano contra
+# yfinance antes de usarlas. No reemplaza a ticker_yahoo (que sigue siendo
+# el ".BA", el papel que realmente se opera en IOL): es un dato extra para
+# comparar precio local vs. ADR (la brecha cambiaria implicita, CCL).
+ADR_ARGENTINA = {
+    "GGAL": "GGAL", "BMA": "BMA", "YPFD": "YPF", "PAMP": "PAM", "CRES": "CRESY",
+    "SUPV": "SUPV", "LOMA": "LOMA", "EDN": "EDN", "TGSU2": "TGS", "TECO2": "TEO",
+    "BBAR": "BBAR", "IRSA": "IRS", "CEPU": "CEPU",
+}
+
+
+def listar_acciones_argentinas(iol: IOLClient) -> pd.DataFrame:
+    """Acciones locales de BYMA (Merval y paneles relacionados) -- no son
+    CEDEARs, son las empresas argentinas en si. Yahoo las pide con sufijo
+    ".BA" (confirmado: las 66 resuelven con ese sufijo, sin excepciones)."""
+    titulos = []
+    for panel in PANELES_ARGENTINA:
+        r = iol._get(f"/api/v2/Cotizaciones/Acciones/{panel}/argentina")
+        titulos.extend(r["titulos"])
+
+    dedup = _deduplicar_por_empresa(titulos)
+
+    filas = []
+    for _, row in dedup.iterrows():
+        ticker = row["ticker"]
+        filas.append({
+            "ticker_usd": ticker,
+            "ticker_cedear": None,  # no es un CEDEAR, es la accion local
+            "ticker_yahoo": f"{ticker}.BA",
+            "ticker_adr_usa": ADR_ARGENTINA.get(ticker),
+            "mercado": "argentina_local",
+            "nombre_empresa": row["empresa"].title(),
+            "variantes": row["variantes"],
+        })
+
+    return pd.DataFrame(filas).sort_values("nombre_empresa").reset_index(drop=True)
+
+
+CRIPTO = [
+    {"ticker_usd": "BTC", "ticker_yahoo": "BTC-USD", "nombre_empresa": "Bitcoin"},
+    {"ticker_usd": "ETH", "ticker_yahoo": "ETH-USD", "nombre_empresa": "Ethereum"},
+    {"ticker_usd": "SOL", "ticker_yahoo": "SOL-USD", "nombre_empresa": "Solana"},
+]
+
+
+def listar_cripto() -> pd.DataFrame:
+    """Cripto no viene de IOL -- son 3 tickers fijos. Sin fundamentales (no
+    tienen balance ni ganancias): analisis_fundamental.py los saltea, solo
+    alimentan fact_precios_daily via precios_historicos.py."""
+    return pd.DataFrame([
+        {
+            "ticker_usd": c["ticker_usd"],
+            "ticker_cedear": None,
+            "ticker_yahoo": c["ticker_yahoo"],
+            "ticker_adr_usa": None,
+            "mercado": "cripto",
+            "nombre_empresa": c["nombre_empresa"],
+            "variantes": c["ticker_usd"],
+        }
+        for c in CRIPTO
+    ])
 
 
 def main() -> None:
@@ -184,9 +269,16 @@ def main() -> None:
     iol.login()
     print("Ingreso a IOL: OK\n")
 
-    empresas = listar_empresas(iol)
-    print(f"CEDEARs unicos (por empresa, sin ETFs): {len(empresas)}")
-    print(f"  de Brasil: {(empresas['mercado'] == 'brasil').sum()}\n")
+    cedears = listar_empresas(iol)
+    argentina = listar_acciones_argentinas(iol)
+    cripto = listar_cripto()
+    empresas = pd.concat([cedears, argentina, cripto], ignore_index=True)
+
+    print(f"Universo total: {len(empresas)}")
+    print(f"  CEDEARs: {len(cedears)} (de Brasil: {(cedears['mercado'] == 'brasil').sum()})")
+    print(f"  Acciones argentinas locales: {len(argentina)} "
+          f"(con ADR en EE.UU.: {argentina['ticker_adr_usa'].notna().sum()})")
+    print(f"  Cripto: {len(cripto)}\n")
     print(empresas[["ticker_usd", "mercado", "nombre_empresa"]].to_string(index=False))
 
     out_dir = Path("data")

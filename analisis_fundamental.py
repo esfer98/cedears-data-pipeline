@@ -285,6 +285,9 @@ def main() -> None:
         return
 
     universo = pd.read_csv("data/cedears_normalizados.csv")
+    # Cripto no tiene balance, ganancias ni EPS que pedir -- solo alimenta
+    # fact_precios_daily via precios_historicos.py, no este script.
+    universo = universo[universo["mercado"] != "cripto"].reset_index(drop=True)
 
     filas = []
     filas_income_statement = []

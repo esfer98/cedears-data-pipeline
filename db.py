@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS dim_empresa (
     ticker_usd      VARCHAR PRIMARY KEY,
     ticker_cedear   VARCHAR,
     ticker_yahoo    VARCHAR,
+    ticker_adr_usa  VARCHAR,
     mercado         VARCHAR,
     nombre_empresa  VARCHAR,
     sector          VARCHAR,
@@ -152,6 +153,7 @@ def conectar() -> duckdb.DuckDBPyConnection:
     con.execute("ALTER TABLE fact_income_statement_annual ADD COLUMN IF NOT EXISTS costo_ingresos DOUBLE")
     con.execute("ALTER TABLE fact_income_statement_annual ADD COLUMN IF NOT EXISTS beneficio_bruto DOUBLE")
     con.execute("ALTER TABLE fact_income_statement_annual ADD COLUMN IF NOT EXISTS gastos_operativos DOUBLE")
+    con.execute("ALTER TABLE dim_empresa ADD COLUMN IF NOT EXISTS ticker_adr_usa VARCHAR")
     return con
 
 
@@ -163,12 +165,13 @@ def upsert_dim_empresa(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> Non
     con.executemany(
         """
         INSERT INTO dim_empresa (
-            ticker_usd, ticker_cedear, ticker_yahoo, mercado, nombre_empresa,
-            sector, industria, pais_origen, variantes, actualizado_en
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+            ticker_usd, ticker_cedear, ticker_yahoo, ticker_adr_usa, mercado,
+            nombre_empresa, sector, industria, pais_origen, variantes, actualizado_en
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
         ON CONFLICT (ticker_usd) DO UPDATE SET
             ticker_cedear = excluded.ticker_cedear,
             ticker_yahoo = excluded.ticker_yahoo,
+            ticker_adr_usa = excluded.ticker_adr_usa,
             mercado = excluded.mercado,
             nombre_empresa = excluded.nombre_empresa,
             sector = COALESCE(excluded.sector, dim_empresa.sector),
@@ -178,9 +181,9 @@ def upsert_dim_empresa(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> Non
             actualizado_en = now()
         """,
         [
-            (f["ticker_usd"], f["ticker_cedear"], f["ticker_yahoo"], f["mercado"],
-             f["nombre_empresa"], f.get("sector"), f.get("industria"), f.get("pais_origen"),
-             f["variantes"])
+            (f["ticker_usd"], f.get("ticker_cedear"), f["ticker_yahoo"], f.get("ticker_adr_usa"),
+             f["mercado"], f["nombre_empresa"], f.get("sector"), f.get("industria"),
+             f.get("pais_origen"), f["variantes"])
             for f in filas
         ],
     )

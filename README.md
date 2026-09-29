@@ -1,9 +1,27 @@
 # CEDEARs Screener
 
-Screener de acciones de EE.UU. y BDRs operables vía CEDEARs desde Argentina.
-Fuentes de datos: API de InvertirOnline (universo + cotizaciones locales) y
-Yahoo Finance / yfinance (fundamentales, precios y ratios de valuación de la
-empresa detrás de cada CEDEAR).
+Screener de activos operables desde Argentina: acciones de EE.UU./BDRs vía
+CEDEARs, acciones argentinas locales (Merval y paneles relacionados), y
+cripto. Fuentes de datos: API de InvertirOnline (universo CEDEARs + acciones
+locales) y Yahoo Finance / yfinance (fundamentales, precios y ratios de
+valuación de la empresa detrás de cada activo).
+
+`dim_empresa.mercado` distingue las cuatro fuentes:
+
+| `mercado` | Qué es | `ticker_yahoo` |
+|---|---|---|
+| `usa_otros` | CEDEAR de empresa de EE.UU. (u otra bolsa no-Brasil) | Ticker de EE.UU./exchange original |
+| `brasil` | CEDEAR de BDR brasileño | `<ticker>.SA` |
+| `argentina_local` | Acción local de BYMA (no es CEDEAR, es la empresa argentina en sí) | `<ticker>.BA` |
+| `cripto` | BTC/ETH/SOL, fijos, no vienen de IOL | `<ticker>-USD` |
+
+Las 13 acciones argentinas que además cotizan como ADR directo en EE.UU.
+(GGAL, BMA, YPF, PAM, CRESY, SUPV, LOMA, EDN, TGS, TEO, BBAR, IRS, CEPU)
+suman ese ticker en `dim_empresa.ticker_adr_usa` — no reemplaza al `.BA`, es
+un dato extra para comparar precio local vs. ADR (brecha cambiaria
+implícita). Cripto no tiene fundamentales (no hay balance ni ganancias que
+pedir), así que `analisis_fundamental.py` la saltea — solo alimenta
+`fact_precios_daily` vía `precios_historicos.py`.
 
 ## Arquitectura por capas
 
@@ -158,7 +176,7 @@ cedears-data-pipeline/
 ├── requirements.txt
 ├── db.py                  # conexion + schema + upserts de DuckDB
 ├── iol_client.py           # cliente de la API de IOL (auth + endpoints)
-├── listado_cedears.py      # universo IOL -> dim_empresa + cedears_normalizados.csv
+├── listado_cedears.py      # universo IOL (CEDEARs + acciones argentinas) + criptomonedas fijas -> dim_empresa + cedears_normalizados.csv
 ├── analisis_fundamental.py # momentum + ratios de Yahoo -> fact_metrics_daily + series crudas (income statement, EPS)
 ├── precios_historicos.py   # OHLCV de Yahoo -> fact_precios_daily
 ├── estado_pipeline.py      # tablero de salud: ultima corrida (ok/error) de cada script
