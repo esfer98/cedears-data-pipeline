@@ -241,8 +241,8 @@ CRIPTO = [
 
 def listar_cripto() -> pd.DataFrame:
     """Cripto no viene de IOL -- son 3 tickers fijos. Sin fundamentales (no
-    tienen balance ni ganancias): analisis_fundamental.py los saltea, solo
-    alimentan fact_precios_daily via precios_historicos.py."""
+    tienen balance ni ganancias): analisis_fundamental_liviano.py/_pesado.py
+    los saltean, solo alimentan fact_precios_daily via precios_historicos.py."""
     return pd.DataFrame([
         {
             "ticker_usd": c["ticker_usd"],

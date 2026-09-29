@@ -1,7 +1,7 @@
 """
 db.py
 -----
-Warehouse local en DuckDB (un solo archivo, sin servidor) con 6 tablas:
+Warehouse local en DuckDB (un solo archivo, sin servidor) con 7 tablas:
 
   dim_empresa                  - descriptiva, cambia poco (PK: ticker_usd)
   fact_metrics_daily           - ratios de valuacion y momentum, una fila por dia (PK: ticker_usd + fecha)
@@ -10,18 +10,28 @@ Warehouse local en DuckDB (un solo archivo, sin servidor) con 6 tablas:
                                   ganancia neta en $ por balance anual (PK: ticker_usd + fecha_balance)
   fact_eps_trimestral          - EPS estimado/reportado por trimestre, incluye el proximo aun sin reportar (PK: ticker_usd + fecha_reporte)
   fact_balance_cashflow_annual - deuda total, efectivo y flujo de caja libre por balance anual (PK: ticker_usd + fecha_balance)
+  fact_macro_daily             - series macro (tasas, VIX, FX, commodities, indices), una fila por
+                                  serie y dia (PK: serie + fecha) -- grano de mercado, no de empresa
 
-listado_cedears.py, analisis_fundamental.py y precios_historicos.py escriben
-cada uno las columnas que les corresponden. dim_empresa se actualiza con
-UPSERT que preserva "sector"/"industria"/"pais_origen" (se refrescan) pero
-NUNCA pisa "lynch_category"/"modelo_negocio" una vez que se cargaron a mano
-(esas columnas no forman parte del UPDATE SET del upsert de metricas).
+listado_cedears.py, analisis_fundamental_liviano.py/_pesado.py,
+precios_historicos.py y macro_diario.py escriben cada uno las columnas/tablas
+que les corresponden. dim_empresa se actualiza con UPSERT que preserva
+"sector"/"industria"/"pais_origen" (se refrescan) pero NUNCA pisa
+"lynch_category"/"modelo_negocio" una vez que se cargaron a mano (esas
+columnas no forman parte del UPDATE SET del upsert de metricas).
 
 fact_income_statement_annual y fact_eps_trimestral son datos que
-analisis_fundamental.py YA pedia a Yahoo para calcular crecimiento_%/sorpresa_%,
-pero antes se descartaban despues de calcular el derivado. Ahora se persisten
-en crudo tambien, para poder graficar la serie real (ingresos/EPS por año o
-trimestre), no solo el porcentaje de cambio.
+analisis_fundamental_pesado.py YA pedia a Yahoo para calcular
+crecimiento_%/sorpresa_%, pero antes se descartaban despues de calcular el
+derivado. Ahora se persisten en crudo tambien, para poder graficar la serie
+real (ingresos/EPS por año o trimestre), no solo el porcentaje de cambio.
+
+fact_macro_daily es deliberadamente angosta (serie, fecha, valor) en vez de
+una columna por serie: son ~16 series de fuentes/unidades heterogeneas (tasas
+en %, indices en puntos, FX y commodities en $) que no comparten grano con
+ninguna empresa -- meterlas como columnas de fact_metrics_daily mezclaria
+grano empresa-dia con grano mercado-dia. Con este diseño agregar una serie
+nueva es una fila de config en macro_diario.py, no una migracion de schema.
 """
 
 from contextlib import contextmanager
@@ -125,6 +135,13 @@ CREATE TABLE IF NOT EXISTS fact_balance_cashflow_annual (
     PRIMARY KEY (ticker_usd, fecha_balance)
 );
 
+CREATE TABLE IF NOT EXISTS fact_macro_daily (
+    serie   VARCHAR,  -- codigo propio (UST10Y, VIX, DXY, USDBRL...), no el ticker de Yahoo
+    fecha   DATE,
+    valor   DOUBLE,   -- unidad depende de la serie: % para tasas/VIX, puntos para indices, $ para FX/commodities
+    PRIMARY KEY (serie, fecha)
+);
+
 -- Log append-only (sin PK a proposito): cada corrida de cada script deja una
 -- fila. Sirve para tres cosas: (1) idempotencia -- no repetir un job que ya
 -- corrio hoy si el catch-up de Task Scheduler dispara dos veces el mismo dia,
@@ -190,6 +207,16 @@ def upsert_dim_empresa(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> Non
 
 
 def upsert_fact_metrics_daily(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> None:
+    """fact_metrics_daily la escriben DOS scripts con cadencias distintas:
+    analisis_fundamental_liviano.py (diario, solo columnas de .info: P/E,
+    P/B, market cap, margenes...) y analisis_fundamental_pesado.py (semanal,
+    solo columnas derivadas de income_stmt/earnings: crecimiento_%,
+    sorpresa_eps_%...). Los domingos corren los dos el mismo dia -- si el
+    UPDATE SET fuera "col = excluded.col" a secas, el que corra segundo
+    pisaria con NULL las columnas que el otro ya habia escrito esa fecha
+    (una fila de un script no trae las columnas del otro). Por eso cada
+    columna usa COALESCE(excluded.col, valor_actual): un valor nuevo la
+    actualiza, un NULL entrante la deja como estaba."""
     if not filas:
         return
     columnas = [
@@ -203,7 +230,10 @@ def upsert_fact_metrics_daily(con: duckdb.DuckDBPyConnection, filas: list[dict])
         "shares_outstanding",
     ]
     placeholders = ", ".join("?" for _ in columnas)
-    actualizaciones = ", ".join(f"{c} = excluded.{c}" for c in columnas if c not in ("ticker_usd", "fecha"))
+    actualizaciones = ", ".join(
+        f"{c} = COALESCE(excluded.{c}, fact_metrics_daily.{c})"
+        for c in columnas if c not in ("ticker_usd", "fecha")
+    )
     con.executemany(
         f"""
         INSERT INTO fact_metrics_daily ({", ".join(columnas)}) VALUES ({placeholders})
@@ -294,13 +324,21 @@ def registrar(con: duckdb.DuckDBPyConnection, script: str):
 
 def ya_corrio_hoy(con: duckdb.DuckDBPyConnection, script: str) -> bool:
     """True si `script` ya tuvo una corrida exitosa hoy. Para la guarda de
-    idempotencia: si Task Scheduler dispara un catch-up (PC apagada a la hora
-    programada, corre al prenderla) y el job normal de esa misma noche ya
-    habia corrido bien, no tiene sentido repetirlo y gastar cupo de API."""
+    idempotencia de los jobs diarios: si Task Scheduler dispara un catch-up
+    (PC apagada a la hora programada, corre al prenderla) y el job normal de
+    esa misma noche ya habia corrido bien, no tiene sentido repetirlo."""
+    return ya_corrio_reciente(con, script, dias=1)
+
+
+def ya_corrio_reciente(con: duckdb.DuckDBPyConnection, script: str, dias: int) -> bool:
+    """True si `script` tuvo una corrida exitosa en los ultimos `dias` dias.
+    Generalizacion de ya_corrio_hoy() para jobs que no son diarios -- p.ej.
+    el fetch pesado semanal usa dias=6: si por catch-up termina corriendo el
+    lunes en vez del domingo, no hace falta que vuelva a correr esa semana."""
     fila = con.execute(
         "SELECT COUNT(*) FROM log_ejecuciones "
-        "WHERE script = ? AND estado = 'ok' AND CAST(inicio AS DATE) = CURRENT_DATE",
-        [script],
+        "WHERE script = ? AND estado = 'ok' AND inicio >= CURRENT_DATE - INTERVAL (?) DAY",
+        [script, dias],
     ).fetchone()
     return fila[0] > 0
 
@@ -337,3 +375,18 @@ def upsert_fact_precios_daily(con: duckdb.DuckDBPyConnection, precios: pd.DataFr
         ON CONFLICT (ticker_usd, fecha) DO UPDATE SET {actualizaciones}
     """)
     con.unregister("precios_temp")
+
+
+def upsert_fact_macro_daily(con: duckdb.DuckDBPyConnection, macro: pd.DataFrame) -> None:
+    """Carga masiva set-based, mismo motivo que upsert_fact_precios_daily:
+    ~16 series x 5 años de historia diaria es demasiado para executemany()."""
+    if macro.empty:
+        return
+    columnas = ["serie", "fecha", "valor"]
+    con.register("macro_temp", macro[columnas])
+    con.execute("""
+        INSERT INTO fact_macro_daily (serie, fecha, valor)
+        SELECT serie, fecha, valor FROM macro_temp
+        ON CONFLICT (serie, fecha) DO UPDATE SET valor = excluded.valor
+    """)
+    con.unregister("macro_temp")

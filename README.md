@@ -20,8 +20,8 @@ Las 13 acciones argentinas que además cotizan como ADR directo en EE.UU.
 suman ese ticker en `dim_empresa.ticker_adr_usa` — no reemplaza al `.BA`, es
 un dato extra para comparar precio local vs. ADR (brecha cambiaria
 implícita). Cripto no tiene fundamentales (no hay balance ni ganancias que
-pedir), así que `analisis_fundamental.py` la saltea — solo alimenta
-`fact_precios_daily` vía `precios_historicos.py`.
+pedir), así que `analisis_fundamental_liviano.py`/`analisis_fundamental_pesado.py`
+la saltean — solo alimenta `fact_precios_daily` vía `precios_historicos.py`.
 
 ## Arquitectura por capas
 
@@ -38,8 +38,10 @@ flowchart LR
 
     subgraph Transform_Load["Transform + Load (hoy: mismo script Python)"]
         listado["listado_cedears.py<br/>dedup, mapeo ticker IOL->Yahoo"]
-        fund["analisis_fundamental.py<br/>ratios, momentum, CAGR"]
+        liviano["analisis_fundamental_liviano.py<br/>.info (diario, 1 call/ticker)"]
+        pesado["analisis_fundamental_pesado.py<br/>estados contables (semanal, 4 calls/ticker)"]
         precios["precios_historicos.py<br/>OHLCV"]
+        macro["macro_diario.py<br/>tasas, VIX, FX, commodities, indices"]
         db["db.py<br/>upsert a DuckDB"]
     end
 
@@ -49,6 +51,7 @@ flowchart LR
         fp[("fact_precios_daily")]
         fi[("fact_income_statement_annual")]
         fe[("fact_eps_trimestral")]
+        fma[("fact_macro_daily")]
     end
 
     subgraph Gold["Gold — una metodologia por archivo, columnas prefijadas"]
@@ -64,11 +67,13 @@ flowchart LR
     IOL --> cache
     YF --> cache
     cache --> listado --> db
-    cache --> fund --> db
+    cache --> liviano --> db
+    cache --> pesado --> db
     cache --> precios --> db
-    db --> dim & fm & fp & fi & fe
+    cache --> macro --> db
+    db --> dim & fm & fp & fi & fe & fma
     dim & fm & fp & fi & fe --> lynch & comp & quant
-    dim & fm & fp & fi & fe --> nb
+    dim & fm & fp & fi & fe & fma --> nb
     lynch --> nb
     comp --> nb
 ```
@@ -107,6 +112,12 @@ modelo dimensional:
   sin `eps_reportado`) para saber cuándo es el próximo reporte.
 - **`fact_balance_cashflow_annual`** — deuda total, efectivo y flujo de caja
   libre por balance anual (PK `ticker_usd` + `fecha_balance`).
+- **`fact_macro_daily`** — una fila por serie macro y día (PK `serie` +
+  `fecha`): tasas (`UST3M/5Y/10Y/30Y`), riesgo (`VIX`, `HYG`, `LQD`), dólar
+  (`DXY`, `USDBRL`, `USDARS`), commodities (`WTI`, `GOLD`, `COPPER`) e
+  índices de referencia (`SP500`, `MERVAL`, `BOVESPA`). Grano de mercado, no
+  de empresa — por eso es una tabla angosta (`serie`, `fecha`, `valor`) en
+  vez de una columna por serie en `fact_metrics_daily`.
 - **`log_ejecuciones`** — append-only, una fila por corrida de cada script
   (`ok`/`error`, cuántas filas afectó, y el detalle si falló). Sirve para
   tres cosas: idempotencia (no repetir un job que ya corrió hoy si el
@@ -121,23 +132,38 @@ distintos sí acumula historial real (no pisa el día anterior).
 ## Orden de ejecución
 
 ```
-python listado_cedears.py       # 1. Universo IOL -> dim_empresa (identidad)
-python analisis_fundamental.py  # 2. Yahoo -> fact_metrics_daily + sector/industria en dim_empresa
-python precios_historicos.py    # 3. Yahoo -> fact_precios_daily (OHLCV, 5 años)
-python gold/lynch.py            # 4. Crea/actualiza la vista gold_lynch (no pide datos nuevos)
-python gold/comparables.py      # 5. Crea/actualiza la vista gold_comparables (idem, no pide datos nuevos)
+# Diario
+python precios_historicos.py             # OHLCV (Yahoo)
+python analisis_fundamental_liviano.py   # .info: P/E, P/B, market cap... (Yahoo, 1 call/ticker)
+python macro_diario.py                   # tasas, VIX, FX, commodities, indices (Yahoo, 16 series)
+python gold/lynch.py                     # recalcula la vista gold_lynch (no pide datos nuevos)
+python gold/comparables.py               # recalcula la vista gold_comparables (idem)
+
+# Semanal (domingos)
+python listado_cedears.py                # universo IOL -> dim_empresa + cedears_normalizados.csv
+python analisis_fundamental_pesado.py    # income statement, balance, cashflow, earnings (Yahoo, 4 calls/ticker)
 ```
 
-`listado_cedears.py` tiene que correr primero: los otros dos leen
-`data/cedears_normalizados.csv` (el universo + el mapeo de ticker de IOL al
-ticker real de Yahoo) para saber qué pedirle a Yahoo. `gold/lynch.py` corre
-al final porque solo lee lo que ya está en el warehouse — no llama a IOL ni a
-Yahoo.
+`listado_cedears.py` tiene que correr antes que cualquier otro Yahoo: los
+demás leen `data/cedears_normalizados.csv` (el universo + el mapeo de ticker
+de IOL al ticker real de Yahoo) para saber qué pedir. Como corre semanal, la
+primera vez (o si el CSV no existe) hay que correrlo a mano una vez antes de
+`analisis_fundamental_liviano.py`/`precios_historicos.py`. `gold/lynch.py` y
+`gold/comparables.py` van al final de cada tanda porque solo leen lo que ya
+está en el warehouse — no llaman a IOL ni a Yahoo.
 
-Todos los scripts (menos las vistas `gold/`) chequean `db.ya_corrio_hoy()` al
-arrancar y no repiten el trabajo si ya corrieron con éxito hoy — pensado para
-que un catch-up de Task Scheduler (PC apagada a la hora programada, corre al
-prenderla) no dispare una segunda corrida redundante el mismo día.
+Todos los scripts que le pegan a una API (menos las vistas `gold/`) chequean
+`db.ya_corrio_hoy()` (diarios) o `db.ya_corrio_reciente(..., dias=6)`
+(semanales) al arrancar, y no repiten el trabajo si ya corrieron con éxito
+en la ventana correspondiente — pensado para que un catch-up de Task
+Scheduler (PC apagada a la hora programada, corre al prenderla) no dispare
+una corrida redundante.
+
+`analisis_fundamental_liviano.py` y `analisis_fundamental_pesado.py` escriben
+en la misma tabla (`fact_metrics_daily`) con cadencias distintas; el UPSERT
+usa `COALESCE(excluded.col, valor_actual)` en vez de pisar directo, así que
+si los dos corren el mismo día (los domingos) ninguno le borra al otro las
+columnas que no le tocan (ver el comentario en `db.upsert_fact_metrics_daily`).
 
 ### Cadencia (pensada para Task Scheduler, todavía no configurado)
 
@@ -147,17 +173,16 @@ cambia cada fuente:
 | Cadencia | Qué corre | Por qué |
 |---|---|---|
 | Diaria (~20:00 ART) | `precios_historicos.py` | El precio cambia todos los días hábiles |
-| Diaria (~20:00 ART) | `analisis_fundamental.py` — parte liviana (`.info`) | Ratios como P/E se mueven con el precio, aunque la empresa no cambie |
+| Diaria (~20:00 ART) | `analisis_fundamental_liviano.py` | Ratios como P/E se mueven con el precio, aunque la empresa no cambie |
+| Diaria (~20:00 ART) | `macro_diario.py` | Tasas/VIX/FX/commodities cambian todos los días hábiles, igual que el precio |
 | Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
 | Semanal (domingos ~20:00 ART) | `listado_cedears.py` | El universo de CEDEARs rara vez cambia |
-| Semanal (domingos ~20:00 ART) | `analisis_fundamental.py` — parte pesada (income statement, balance, cashflow, earnings) | Los balances solo cambian ~4 veces al año |
+| Semanal (domingos ~20:00 ART) | `analisis_fundamental_pesado.py` | Los balances solo cambian ~4 veces al año |
 | Mensual | Nada automatizado todavía | Reservado para revisión manual de `lynch_category`/`modelo_negocio` |
 
 20:00 ART queda después del cierre de BYMA (17:00) y de NYSE/NASDAQ (17:00–18:00
 ART según horario de verano en EE.UU.), con margen para que Yahoo termine de
-asentar el dato del día. La separación liviana/pesada de `analisis_fundamental.py`
-en dos cadencias todavía no está implementada — hoy el script hace las 5
-llamadas cada vez que corre.
+asentar el dato del día.
 
 ### Agregar una metodología nueva en `gold/`
 
@@ -177,8 +202,10 @@ cedears-data-pipeline/
 ├── db.py                  # conexion + schema + upserts de DuckDB
 ├── iol_client.py           # cliente de la API de IOL (auth + endpoints)
 ├── listado_cedears.py      # universo IOL (CEDEARs + acciones argentinas) + criptomonedas fijas -> dim_empresa + cedears_normalizados.csv
-├── analisis_fundamental.py # momentum + ratios de Yahoo -> fact_metrics_daily + series crudas (income statement, EPS)
+├── analisis_fundamental_liviano.py  # .info de Yahoo (diario) -> fact_metrics_daily (ratios de valuación) + sector/industria
+├── analisis_fundamental_pesado.py   # income statement/balance/cashflow/earnings de Yahoo (semanal) -> momentum + series crudas
 ├── precios_historicos.py   # OHLCV de Yahoo -> fact_precios_daily
+├── macro_diario.py         # tasas/VIX/FX/commodities/indices de Yahoo -> fact_macro_daily
 ├── estado_pipeline.py      # tablero de salud: ultima corrida (ok/error) de cada script
 ├── gold/                   # una metodologia de analisis = un archivo, columnas prefijadas
 │   ├── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)
@@ -225,8 +252,10 @@ registrado como "Python 3 (.venv)" — si VS Code no lo detecta solo, `Ctrl+Shif
 7. Correr, en este orden (ver "Orden de ejecución" más abajo):
    ```bash
    python listado_cedears.py
-   python analisis_fundamental.py
+   python analisis_fundamental_liviano.py
+   python analisis_fundamental_pesado.py
    python precios_historicos.py
+   python macro_diario.py
    python gold/lynch.py
    python gold/comparables.py
    ```

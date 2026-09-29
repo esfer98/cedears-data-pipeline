@@ -4,9 +4,9 @@ precios_historicos.py
 Precios diarios (Open/High/Low/Close/Adj Close/Volume) de las empresas de
 EE.UU. y BDRs detras de los CEDEARs, via Yahoo Finance.
 
-Separado de analisis_fundamental.py porque esto es una serie de tiempo (para
-graficos, retornos, volatilidad) y lo otro es un snapshot/momentum de
-resultados. Distinta naturaleza, distinto script.
+Separado de analisis_fundamental_liviano.py/_pesado.py porque esto es una
+serie de tiempo (para graficos, retornos, volatilidad) y lo otro es un
+snapshot/momentum de resultados. Distinta naturaleza, distinto script.
 
 Adj Close es el dato clave para calcular retornos reales: ya viene corregido
 por splits y dividendos, a diferencia de Close.
