@@ -57,6 +57,7 @@ flowchart LR
     subgraph Gold["Gold — una metodologia por archivo, columnas prefijadas"]
         lynch["gold/lynch.py<br/>vista gold_lynch (columnas lynch_*)"]
         comp["gold/comparables.py<br/>vista gold_comparables (columnas comp_*)"]
+        macrosens["gold/macro_sensitivity.py<br/>vista gold_macro_sensitivity (columnas macro_*)"]
         quant["gold/quant.py (futuro)"]
     end
 
@@ -73,9 +74,11 @@ flowchart LR
     cache --> macro --> db
     db --> dim & fm & fp & fi & fe & fma
     dim & fm & fp & fi & fe --> lynch & comp & quant
+    dim & fp & fma --> macrosens
     dim & fm & fp & fi & fe & fma --> nb
     lynch --> nb
     comp --> nb
+    macrosens --> nb
 ```
 
 **Estado actual:** Transform y Load viven juntos, en Python (pandas), dentro de
@@ -138,6 +141,7 @@ python analisis_fundamental_liviano.py   # .info: P/E, P/B, market cap... (Yahoo
 python macro_diario.py                   # tasas, VIX, FX, commodities, indices (Yahoo, 16 series)
 python gold/lynch.py                     # recalcula la vista gold_lynch (no pide datos nuevos)
 python gold/comparables.py               # recalcula la vista gold_comparables (idem)
+python gold/macro_sensitivity.py         # recalcula la vista gold_macro_sensitivity (idem, va despues de lynch.py -- su reporte hace JOIN contra gold_lynch)
 
 # Semanal (domingos)
 python listado_cedears.py                # universo IOL -> dim_empresa + cedears_normalizados.csv
@@ -175,7 +179,7 @@ cambia cada fuente:
 | Diaria (~20:00 ART) | `precios_historicos.py` | El precio cambia todos los días hábiles |
 | Diaria (~20:00 ART) | `analisis_fundamental_liviano.py` | Ratios como P/E se mueven con el precio, aunque la empresa no cambie |
 | Diaria (~20:00 ART) | `macro_diario.py` | Tasas/VIX/FX/commodities cambian todos los días hábiles, igual que el precio |
-| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
+| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
 | Semanal (domingos ~20:00 ART) | `listado_cedears.py` | El universo de CEDEARs rara vez cambia |
 | Semanal (domingos ~20:00 ART) | `analisis_fundamental_pesado.py` | Los balances solo cambian ~4 veces al año |
 | Mensual | Nada automatizado todavía | Reservado para revisión manual de `lynch_category`/`modelo_negocio` |
@@ -209,7 +213,8 @@ cedears-data-pipeline/
 ├── estado_pipeline.py      # tablero de salud: ultima corrida (ok/error) de cada script
 ├── gold/                   # una metodologia de analisis = un archivo, columnas prefijadas
 │   ├── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)
-│   └── comparables.py      # vista gold_comparables (empresa vs. mediana de su sector + pares similares)
+│   ├── comparables.py      # vista gold_comparables (empresa vs. mediana de su sector + pares similares)
+│   └── macro_sensitivity.py  # vista gold_macro_sensitivity (correlacion retorno vs. tasa UST10Y/30Y)
 ├── notebooks/
 │   └── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción)
 ├── cache/                  # cache en disco por ticker (evita re-pedirle a Yahoo)
@@ -258,6 +263,7 @@ registrado como "Python 3 (.venv)" — si VS Code no lo detecta solo, `Ctrl+Shif
    python macro_diario.py
    python gold/lynch.py
    python gold/comparables.py
+   python gold/macro_sensitivity.py
    ```
 
 ## Notas
