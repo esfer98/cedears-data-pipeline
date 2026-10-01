@@ -172,7 +172,25 @@ usa `COALESCE(excluded.col, valor_actual)` en vez de pisar directo, así que
 si los dos corren el mismo día (los domingos) ninguno le borra al otro las
 columnas que no le tocan (ver el comentario en `db.upsert_fact_metrics_daily`).
 
-### Cadencia (pensada para Task Scheduler, todavía no configurado)
+**Ojo, ese COALESCE no alcanza solo:** protege conflictos del *mismo día*
+(misma fila, mismo PK), pero cada día nuevo es una fila nueva — si un día
+corre solo `liviano`, la fila de *ese día* tiene NULL en las columnas que
+solo trae `pesado` (`crecimiento_ingresos_anual_pct`, etc.), aunque el dato
+siga vigente de la semana pasada. `gold_lynch.py` y `gold_comparables.py`
+resuelven esto con `LAST_VALUE(col IGNORE NULLS) OVER (...)` — forward-fill
+de cada columna a su último valor conocido antes de quedarse con la fila
+más reciente por empresa. Bug real que apareció la primera vez que corrió
+`liviano` dos días seguidos sin `pesado` en el medio (207 empresas quedaron
+"Sin clasificar" en `gold_lynch` hasta que se agregó el forward-fill).
+
+### Cadencia (Task Scheduler)
+
+Configurado como dos tareas de Windows (`CedearsScreener-Diario` /
+`CedearsScreener-Semanal`), creadas con `Register-ScheduledTask`, modo
+"solo con sesión iniciada" y catch-up activado (`-StartWhenAvailable`: si la
+PC estaba apagada a la hora programada, corre al prenderla). Cada una llama
+a su script wrapper (`run_diario.ps1` / `run_semanal.ps1`), que encadena los
+scripts de Python correspondientes.
 
 No todo necesita correr con la misma frecuencia — depende de qué tan rápido
 cambia cada fuente:
@@ -228,6 +246,8 @@ cedears-data-pipeline/
 ├── precios_historicos.py   # OHLCV de Yahoo -> fact_precios_daily
 ├── macro_diario.py         # tasas/VIX/FX/commodities/indices de Yahoo -> fact_macro_daily
 ├── correcciones_sector.py  # override manual de sector cuando Yahoo clasifica mal -> dim_empresa.sector_corregido
+├── run_diario.ps1          # wrapper para Task Scheduler: precios + liviano + macro + gold (diario)
+├── run_semanal.ps1         # wrapper para Task Scheduler: listado_cedears + pesado (semanal)
 ├── estado_pipeline.py      # tablero de salud: ultima corrida (ok/error) de cada script
 ├── gold/                   # una metodologia de analisis = un archivo, columnas prefijadas
 │   ├── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)

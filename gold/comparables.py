@@ -32,9 +32,48 @@ import db
 
 SQL_VISTA = """
 CREATE OR REPLACE VIEW gold_comparables AS
-WITH ultimo AS (
-    SELECT *
+WITH rellenado AS (
+    -- Mismo motivo que gold_lynch: fact_metrics_daily la escriben liviano
+    -- (diario) y pesado (semanal), cada uno solo trae sus columnas -- un dia
+    -- que corre solo liviano, la fila de ESE dia tiene NULL en crecimiento_%
+    -- aunque el dato siga vigente. Forward-fill con LAST_VALUE IGNORE NULLS
+    -- antes de quedarnos con la fila mas reciente (ver comentario largo en
+    -- gold/lynch.py).
+    SELECT
+        ticker_usd, fecha,
+        LAST_VALUE(crecimiento_ingresos_anual_pct IGNORE NULLS) OVER w AS crecimiento_ingresos_anual_pct,
+        LAST_VALUE(crecimiento_ganancia_anual_pct IGNORE NULLS) OVER w AS crecimiento_ganancia_anual_pct,
+        LAST_VALUE(aceleracion_ingresos_pct IGNORE NULLS) OVER w AS aceleracion_ingresos_pct,
+        LAST_VALUE(eps_growth_3y_pct IGNORE NULLS) OVER w AS eps_growth_3y_pct,
+        LAST_VALUE(eps_growth_5y_pct IGNORE NULLS) OVER w AS eps_growth_5y_pct,
+        LAST_VALUE(sorpresa_eps_prom_4q_pct IGNORE NULLS) OVER w AS sorpresa_eps_prom_4q_pct,
+        LAST_VALUE(trimestres_superando_estimado IGNORE NULLS) OVER w AS trimestres_superando_estimado,
+        LAST_VALUE(market_cap IGNORE NULLS) OVER w AS market_cap,
+        LAST_VALUE(enterprise_value IGNORE NULLS) OVER w AS enterprise_value,
+        LAST_VALUE(pe_trailing IGNORE NULLS) OVER w AS pe_trailing,
+        LAST_VALUE(pe_forward IGNORE NULLS) OVER w AS pe_forward,
+        LAST_VALUE(peg_ratio IGNORE NULLS) OVER w AS peg_ratio,
+        LAST_VALUE(price_to_book IGNORE NULLS) OVER w AS price_to_book,
+        LAST_VALUE(ev_ebitda IGNORE NULLS) OVER w AS ev_ebitda,
+        LAST_VALUE(margen_bruto_pct IGNORE NULLS) OVER w AS margen_bruto_pct,
+        LAST_VALUE(margen_operativo_pct IGNORE NULLS) OVER w AS margen_operativo_pct,
+        LAST_VALUE(margen_neto_pct IGNORE NULLS) OVER w AS margen_neto_pct,
+        LAST_VALUE(roe_pct IGNORE NULLS) OVER w AS roe_pct,
+        LAST_VALUE(roa_pct IGNORE NULLS) OVER w AS roa_pct,
+        LAST_VALUE(deuda_patrimonio IGNORE NULLS) OVER w AS deuda_patrimonio,
+        LAST_VALUE(razon_corriente IGNORE NULLS) OVER w AS razon_corriente,
+        LAST_VALUE(dividend_yield_pct IGNORE NULLS) OVER w AS dividend_yield_pct,
+        LAST_VALUE(payout_ratio_pct IGNORE NULLS) OVER w AS payout_ratio_pct,
+        LAST_VALUE(beta IGNORE NULLS) OVER w AS beta,
+        LAST_VALUE(insider_holding_pct IGNORE NULLS) OVER w AS insider_holding_pct,
+        LAST_VALUE(institutional_holding_pct IGNORE NULLS) OVER w AS institutional_holding_pct,
+        LAST_VALUE(shares_outstanding IGNORE NULLS) OVER w AS shares_outstanding
     FROM fact_metrics_daily
+    WINDOW w AS (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+),
+ultimo AS (
+    SELECT *
+    FROM rellenado
     QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker_usd ORDER BY fecha DESC) = 1
 ),
 base AS (
