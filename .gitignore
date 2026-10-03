@@ -17,6 +17,9 @@ data/
 cache/
 *.csv
 
+# Logs de las corridas via Task Scheduler (run_diario.ps1/run_semanal.ps1)
+logs/
+
 # VS Code
 .vscode/
 
