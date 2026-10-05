@@ -254,7 +254,8 @@ cedears-data-pipeline/
 │   ├── comparables.py      # vista gold_comparables (empresa vs. mediana de su sector + pares similares)
 │   └── macro_sensitivity.py  # vista gold_macro_sensitivity (correlacion retorno vs. tasa UST10Y/30Y)
 ├── notebooks/
-│   └── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción)
+│   ├── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción, sensibilidad a tasa)
+│   └── eda_brasil.ipynb    # Recorte a las BDRs brasileñas: retorno limpio vs. cambiario (USDBRL) y correlación vs. USDBRL/Bovespa
 ├── cache/                  # cache en disco por ticker (evita re-pedirle a Yahoo)
 └── data/                   # se genera solo: CSVs + warehouse.duckdb
 ```
