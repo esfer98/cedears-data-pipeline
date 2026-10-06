@@ -63,6 +63,8 @@ function Run-Paso {
 Run-Paso "precios_historicos" "precios_historicos.py"
 Run-Paso "analisis_fundamental_liviano" "analisis_fundamental_liviano.py"
 Run-Paso "macro_diario" "macro_diario.py"
+Run-Paso "dolar_argentina" "dolar_argentina.py"
 Run-Paso "gold_lynch" "gold\lynch.py"
 Run-Paso "gold_comparables" "gold\comparables.py"
 Run-Paso "gold_macro_sensitivity" "gold\macro_sensitivity.py"
+Run-Paso "gold_technical" "gold\technical.py"

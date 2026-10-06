@@ -42,6 +42,7 @@ flowchart LR
         pesado["analisis_fundamental_pesado.py<br/>estados contables (semanal, 4 calls/ticker)"]
         precios["precios_historicos.py<br/>OHLCV"]
         macro["macro_diario.py<br/>tasas, VIX, FX, commodities, indices"]
+        dolar["dolar_argentina.py<br/>oficial/blue/MEP/CCL (dolarapi.com)"]
         db["db.py<br/>upsert a DuckDB"]
     end
 
@@ -58,6 +59,7 @@ flowchart LR
         lynch["gold/lynch.py<br/>vista gold_lynch (columnas lynch_*)"]
         comp["gold/comparables.py<br/>vista gold_comparables (columnas comp_*)"]
         macrosens["gold/macro_sensitivity.py<br/>vista gold_macro_sensitivity (columnas macro_*)"]
+        tech["gold/technical.py<br/>vista gold_technical (columnas tech_*)"]
         quant["gold/quant.py (futuro)"]
     end
 
@@ -72,13 +74,16 @@ flowchart LR
     cache --> pesado --> db
     cache --> precios --> db
     cache --> macro --> db
+    dolar --> db
     db --> dim & fm & fp & fi & fe & fma
     dim & fm & fp & fi & fe --> lynch & comp & quant
     dim & fp & fma --> macrosens
+    fp --> tech
     dim & fm & fp & fi & fe & fma --> nb
     lynch --> nb
     comp --> nb
     macrosens --> nb
+    tech --> nb
 ```
 
 **Estado actual:** Transform y Load viven juntos, en Python (pandas), dentro de
@@ -120,10 +125,18 @@ modelo dimensional:
   libre por balance anual (PK `ticker_usd` + `fecha_balance`).
 - **`fact_macro_daily`** — una fila por serie macro y día (PK `serie` +
   `fecha`): tasas (`UST3M/5Y/10Y/30Y`), riesgo (`VIX`, `HYG`, `LQD`), dólar
-  (`DXY`, `USDBRL`, `USDARS`), commodities (`WTI`, `GOLD`, `COPPER`) e
-  índices de referencia (`SP500`, `MERVAL`, `BOVESPA`). Grano de mercado, no
-  de empresa — por eso es una tabla angosta (`serie`, `fecha`, `valor`) en
-  vez de una columna por serie en `fact_metrics_daily`.
+  (`DXY`, `USDBRL`, `USDARS`), commodities (`WTI`, `GOLD`, `COPPER`), índices
+  de referencia (`SP500`, `MERVAL`, `BOVESPA`), y el dólar argentino
+  multi-cotización (`AR_OFICIAL`, `AR_BLUE`, `AR_MEP`, `AR_CCL`,
+  `AR_MAYORISTA`, `AR_CRIPTO`, `AR_TARJETA` — de `dolarapi.com`, ver
+  `dolar_argentina.py`; distinto de `USDARS`, que viene de Yahoo con otra
+  metodología, se dejan los dos para comparar). Grano de mercado, no de
+  empresa — por eso es una tabla angosta (`serie`, `fecha`, `valor`) en vez
+  de una columna por serie en `fact_metrics_daily`. `dolarapi.com` no tiene
+  histórico (solo el valor del día), así que estas 7 series arrancan desde
+  que se corrió `dolar_argentina.py` por primera vez — no se puede rellenar
+  el pasado, pero de ahí en más se acumula solo (mismo caso que
+  `institutional_holding_pct`).
 - **`log_ejecuciones`** — append-only, una fila por corrida de cada script
   (`ok`/`error`, cuántas filas afectó, y el detalle si falló). Sirve para
   tres cosas: idempotencia (no repetir un job que ya corrió hoy si el
@@ -142,9 +155,11 @@ distintos sí acumula historial real (no pisa el día anterior).
 python precios_historicos.py             # OHLCV (Yahoo)
 python analisis_fundamental_liviano.py   # .info: P/E, P/B, market cap... (Yahoo, 1 call/ticker)
 python macro_diario.py                   # tasas, VIX, FX, commodities, indices (Yahoo, 16 series)
+python dolar_argentina.py                # oficial/blue/MEP/CCL/mayorista/cripto/tarjeta (dolarapi.com, 7 cotizaciones)
 python gold/lynch.py                     # recalcula la vista gold_lynch (no pide datos nuevos)
 python gold/comparables.py               # recalcula la vista gold_comparables (idem)
 python gold/macro_sensitivity.py         # recalcula la vista gold_macro_sensitivity (idem, va despues de lynch.py -- su reporte hace JOIN contra gold_lynch)
+python gold/technical.py                 # recalcula la vista gold_technical (idem, solo lee fact_precios_daily)
 
 # Semanal (domingos)
 python listado_cedears.py                # universo IOL -> dim_empresa + cedears_normalizados.csv
@@ -200,7 +215,8 @@ cambia cada fuente:
 | Diaria (~20:00 ART) | `precios_historicos.py` | El precio cambia todos los días hábiles |
 | Diaria (~20:00 ART) | `analisis_fundamental_liviano.py` | Ratios como P/E se mueven con el precio, aunque la empresa no cambie |
 | Diaria (~20:00 ART) | `macro_diario.py` | Tasas/VIX/FX/commodities cambian todos los días hábiles, igual que el precio |
-| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
+| Diaria (~20:00 ART) | `dolar_argentina.py` | El dólar (oficial/blue/MEP/CCL) cambia todos los días; la API no tiene histórico, así que hay que pedirlo todos los días para acumularlo |
+| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py`, `gold/technical.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
 | Semanal (domingos ~20:00 ART) | `listado_cedears.py` | El universo de CEDEARs rara vez cambia |
 | Semanal (domingos ~20:00 ART) | `analisis_fundamental_pesado.py` | Los balances solo cambian ~4 veces al año |
 | Mensual | Nada automatizado todavía | Reservado para revisión manual de `lynch_category`/`modelo_negocio` |
@@ -245,6 +261,7 @@ cedears-data-pipeline/
 ├── analisis_fundamental_pesado.py   # income statement/balance/cashflow/earnings de Yahoo (semanal) -> momentum + series crudas
 ├── precios_historicos.py   # OHLCV de Yahoo -> fact_precios_daily
 ├── macro_diario.py         # tasas/VIX/FX/commodities/indices de Yahoo -> fact_macro_daily
+├── dolar_argentina.py      # oficial/blue/MEP/CCL/mayorista/cripto/tarjeta de dolarapi.com -> fact_macro_daily
 ├── correcciones_sector.py  # override manual de sector cuando Yahoo clasifica mal -> dim_empresa.sector_corregido
 ├── run_diario.ps1          # wrapper para Task Scheduler: precios + liviano + macro + gold (diario)
 ├── run_semanal.ps1         # wrapper para Task Scheduler: listado_cedears + pesado (semanal)
@@ -252,7 +269,8 @@ cedears-data-pipeline/
 ├── gold/                   # una metodologia de analisis = un archivo, columnas prefijadas
 │   ├── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)
 │   ├── comparables.py      # vista gold_comparables (empresa vs. mediana de su sector + pares similares)
-│   └── macro_sensitivity.py  # vista gold_macro_sensitivity (correlacion retorno vs. tasa UST10Y/30Y)
+│   ├── macro_sensitivity.py  # vista gold_macro_sensitivity (correlacion retorno vs. tasa UST10Y/30Y)
+│   └── technical.py        # vista gold_technical (SMA50/200, RSI-14, momentum 1/3/6m)
 ├── notebooks/
 │   ├── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción, sensibilidad a tasa)
 │   ├── eda_brasil.ipynb    # BDR + ADR directo de Brasil: retorno limpio vs. cambiario (USDBRL) y correlación vs. USDBRL/Bovespa
@@ -301,9 +319,11 @@ registrado como "Python 3 (.venv)" — si VS Code no lo detecta solo, `Ctrl+Shif
    python analisis_fundamental_pesado.py
    python precios_historicos.py
    python macro_diario.py
+   python dolar_argentina.py
    python gold/lynch.py
    python gold/comparables.py
    python gold/macro_sensitivity.py
+   python gold/technical.py
    ```
 
 ## Notas
