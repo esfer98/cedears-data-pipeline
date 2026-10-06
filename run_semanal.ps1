@@ -47,3 +47,4 @@ function Run-Paso {
 
 Run-Paso "listado_cedears" "listado_cedears.py"
 Run-Paso "analisis_fundamental_pesado" "analisis_fundamental_pesado.py"
+Run-Paso "consenso_analistas" "consenso_analistas.py"

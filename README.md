@@ -43,6 +43,7 @@ flowchart LR
         precios["precios_historicos.py<br/>OHLCV"]
         macro["macro_diario.py<br/>tasas, VIX, FX, commodities, indices"]
         dolar["dolar_argentina.py<br/>oficial/blue/MEP/CCL (dolarapi.com)"]
+        consenso["consenso_analistas.py<br/>precio objetivo + recomendaciones (semanal)"]
         db["db.py<br/>upsert a DuckDB"]
     end
 
@@ -53,6 +54,7 @@ flowchart LR
         fi[("fact_income_statement_annual")]
         fe[("fact_eps_trimestral")]
         fma[("fact_macro_daily")]
+        fca[("fact_consenso_analistas")]
     end
 
     subgraph Gold["Gold — una metodologia por archivo, columnas prefijadas"]
@@ -60,6 +62,7 @@ flowchart LR
         comp["gold/comparables.py<br/>vista gold_comparables (columnas comp_*)"]
         macrosens["gold/macro_sensitivity.py<br/>vista gold_macro_sensitivity (columnas macro_*)"]
         tech["gold/technical.py<br/>vista gold_technical (columnas tech_*)"]
+        salud["gold/salud_financiera.py<br/>vista gold_salud_financiera (columnas salud_*)"]
         quant["gold/quant.py (futuro)"]
     end
 
@@ -74,16 +77,19 @@ flowchart LR
     cache --> pesado --> db
     cache --> precios --> db
     cache --> macro --> db
+    cache --> consenso --> db
     dolar --> db
-    db --> dim & fm & fp & fi & fe & fma
+    db --> dim & fm & fp & fi & fe & fma & fca
     dim & fm & fp & fi & fe --> lynch & comp & quant
     dim & fp & fma --> macrosens
     fp --> tech
-    dim & fm & fp & fi & fe & fma --> nb
+    fm & fi --> salud
+    dim & fm & fp & fi & fe & fma & fca --> nb
     lynch --> nb
     comp --> nb
     macrosens --> nb
     tech --> nb
+    salud --> nb
 ```
 
 **Estado actual:** Transform y Load viven juntos, en Python (pandas), dentro de
@@ -137,6 +143,13 @@ modelo dimensional:
   que se corrió `dolar_argentina.py` por primera vez — no se puede rellenar
   el pasado, pero de ahí en más se acumula solo (mismo caso que
   `institutional_holding_pct`).
+- **`fact_consenso_analistas`** — un snapshot por día (PK `ticker_usd` +
+  `fecha`): precio objetivo (actual/bajo/alto/mediana) y conteo de
+  recomendaciones (`strong_buy`/`buy`/`hold`/`sell`/`strong_sell`) de los
+  analistas que cubren cada empresa — ver `consenso_analistas.py`. Cadencia
+  semanal (mismo motivo que `analisis_fundamental_pesado.py`: no cambia
+  todos los días). Un ticker sin cobertura de analistas no es un error:
+  queda la fila con las columnas de recomendación en NULL.
 - **`log_ejecuciones`** — append-only, una fila por corrida de cada script
   (`ok`/`error`, cuántas filas afectó, y el detalle si falló). Sirve para
   tres cosas: idempotencia (no repetir un job que ya corrió hoy si el
@@ -160,10 +173,12 @@ python gold/lynch.py                     # recalcula la vista gold_lynch (no pid
 python gold/comparables.py               # recalcula la vista gold_comparables (idem)
 python gold/macro_sensitivity.py         # recalcula la vista gold_macro_sensitivity (idem, va despues de lynch.py -- su reporte hace JOIN contra gold_lynch)
 python gold/technical.py                 # recalcula la vista gold_technical (idem, solo lee fact_precios_daily)
+python gold/salud_financiera.py          # recalcula la vista gold_salud_financiera (idem, lee fact_metrics_daily + fact_balance_cashflow_annual)
 
 # Semanal (domingos)
 python listado_cedears.py                # universo IOL -> dim_empresa + cedears_normalizados.csv
 python analisis_fundamental_pesado.py    # income statement, balance, cashflow, earnings (Yahoo, 4 calls/ticker)
+python consenso_analistas.py             # precio objetivo + recomendaciones (Yahoo, 2 calls/ticker)
 ```
 
 `listado_cedears.py` tiene que correr antes que cualquier otro Yahoo: los
@@ -216,9 +231,10 @@ cambia cada fuente:
 | Diaria (~20:00 ART) | `analisis_fundamental_liviano.py` | Ratios como P/E se mueven con el precio, aunque la empresa no cambie |
 | Diaria (~20:00 ART) | `macro_diario.py` | Tasas/VIX/FX/commodities cambian todos los días hábiles, igual que el precio |
 | Diaria (~20:00 ART) | `dolar_argentina.py` | El dólar (oficial/blue/MEP/CCL) cambia todos los días; la API no tiene histórico, así que hay que pedirlo todos los días para acumularlo |
-| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py`, `gold/technical.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
+| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py`, `gold/technical.py`, `gold/salud_financiera.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
 | Semanal (domingos ~20:00 ART) | `listado_cedears.py` | El universo de CEDEARs rara vez cambia |
 | Semanal (domingos ~20:00 ART) | `analisis_fundamental_pesado.py` | Los balances solo cambian ~4 veces al año |
+| Semanal (domingos ~20:00 ART) | `consenso_analistas.py` | Los precios objetivo/recomendaciones no se actualizan todos los días |
 | Mensual | Nada automatizado todavía | Reservado para revisión manual de `lynch_category`/`modelo_negocio` |
 
 20:00 ART queda después del cierre de BYMA (17:00) y de NYSE/NASDAQ (17:00–18:00
@@ -262,15 +278,17 @@ cedears-data-pipeline/
 ├── precios_historicos.py   # OHLCV de Yahoo -> fact_precios_daily
 ├── macro_diario.py         # tasas/VIX/FX/commodities/indices de Yahoo -> fact_macro_daily
 ├── dolar_argentina.py      # oficial/blue/MEP/CCL/mayorista/cripto/tarjeta de dolarapi.com -> fact_macro_daily
+├── consenso_analistas.py   # precio objetivo + recomendaciones de Yahoo (semanal) -> fact_consenso_analistas
 ├── correcciones_sector.py  # override manual de sector cuando Yahoo clasifica mal -> dim_empresa.sector_corregido
-├── run_diario.ps1          # wrapper para Task Scheduler: precios + liviano + macro + gold (diario)
-├── run_semanal.ps1         # wrapper para Task Scheduler: listado_cedears + pesado (semanal)
+├── run_diario.ps1          # wrapper para Task Scheduler: precios + liviano + macro + dolar + gold (diario)
+├── run_semanal.ps1         # wrapper para Task Scheduler: listado_cedears + pesado + consenso (semanal)
 ├── estado_pipeline.py      # tablero de salud: ultima corrida (ok/error) de cada script
 ├── gold/                   # una metodologia de analisis = un archivo, columnas prefijadas
 │   ├── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)
 │   ├── comparables.py      # vista gold_comparables (empresa vs. mediana de su sector + pares similares)
 │   ├── macro_sensitivity.py  # vista gold_macro_sensitivity (correlacion retorno vs. tasa UST10Y/30Y)
-│   └── technical.py        # vista gold_technical (SMA50/200, RSI-14, momentum 1/3/6m)
+│   ├── technical.py        # vista gold_technical (SMA50/200, RSI-14, momentum 1/3/6m)
+│   └── salud_financiera.py # vista gold_salud_financiera (score de liquidez/apalancamiento/rentabilidad/cobertura)
 ├── notebooks/
 │   ├── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción, sensibilidad a tasa)
 │   ├── eda_brasil.ipynb    # BDR + ADR directo de Brasil: retorno limpio vs. cambiario (USDBRL) y correlación vs. USDBRL/Bovespa
@@ -320,10 +338,12 @@ registrado como "Python 3 (.venv)" — si VS Code no lo detecta solo, `Ctrl+Shif
    python precios_historicos.py
    python macro_diario.py
    python dolar_argentina.py
+   python consenso_analistas.py
    python gold/lynch.py
    python gold/comparables.py
    python gold/macro_sensitivity.py
    python gold/technical.py
+   python gold/salud_financiera.py
    ```
 
 ## Notas

@@ -1,7 +1,7 @@
 """
 db.py
 -----
-Warehouse local en DuckDB (un solo archivo, sin servidor) con 7 tablas:
+Warehouse local en DuckDB (un solo archivo, sin servidor) con 8 tablas:
 
   dim_empresa                  - descriptiva, cambia poco (PK: ticker_usd)
   fact_metrics_daily           - ratios de valuacion y momentum, una fila por dia (PK: ticker_usd + fecha)
@@ -12,6 +12,8 @@ Warehouse local en DuckDB (un solo archivo, sin servidor) con 7 tablas:
   fact_balance_cashflow_annual - deuda total, efectivo y flujo de caja libre por balance anual (PK: ticker_usd + fecha_balance)
   fact_macro_daily             - series macro (tasas, VIX, FX, commodities, indices), una fila por
                                   serie y dia (PK: serie + fecha) -- grano de mercado, no de empresa
+  fact_consenso_analistas      - precio objetivo y recomendaciones de Wall Street, una fila por
+                                  dia (PK: ticker_usd + fecha) -- ver consenso_analistas.py
 
 listado_cedears.py, analisis_fundamental_liviano.py/_pesado.py,
 precios_historicos.py y macro_diario.py escriben cada uno las columnas/tablas
@@ -147,6 +149,21 @@ CREATE TABLE IF NOT EXISTS fact_macro_daily (
     fecha   DATE,
     valor   DOUBLE,   -- unidad depende de la serie: % para tasas/VIX, puntos para indices, $ para FX/commodities
     PRIMARY KEY (serie, fecha)
+);
+
+CREATE TABLE IF NOT EXISTS fact_consenso_analistas (
+    ticker_usd              VARCHAR,
+    fecha                   DATE,
+    precio_objetivo_actual  DOUBLE,
+    precio_objetivo_bajo    DOUBLE,
+    precio_objetivo_alto    DOUBLE,
+    precio_objetivo_mediana DOUBLE,
+    rec_strong_buy          INTEGER,
+    rec_buy                 INTEGER,
+    rec_hold                INTEGER,
+    rec_sell                INTEGER,
+    rec_strong_sell         INTEGER,
+    PRIMARY KEY (ticker_usd, fecha)
 );
 
 -- Log append-only (sin PK a proposito): cada corrida de cada script deja una
@@ -414,3 +431,25 @@ def upsert_fact_macro_daily(con: duckdb.DuckDBPyConnection, macro: pd.DataFrame)
         ON CONFLICT (serie, fecha) DO UPDATE SET valor = excluded.valor
     """)
     con.unregister("macro_temp")
+
+
+def upsert_fact_consenso_analistas(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> None:
+    """Una fila por ticker y dia (igual que fact_metrics_daily), ~420 filas
+    por corrida -- executemany() alcanza, no hace falta el patron set-based
+    de precios_daily/macro_daily."""
+    if not filas:
+        return
+    columnas = [
+        "ticker_usd", "fecha", "precio_objetivo_actual", "precio_objetivo_bajo",
+        "precio_objetivo_alto", "precio_objetivo_mediana",
+        "rec_strong_buy", "rec_buy", "rec_hold", "rec_sell", "rec_strong_sell",
+    ]
+    placeholders = ", ".join("?" for _ in columnas)
+    actualizaciones = ", ".join(f"{c} = excluded.{c}" for c in columnas if c not in ("ticker_usd", "fecha"))
+    con.executemany(
+        f"""
+        INSERT INTO fact_consenso_analistas ({", ".join(columnas)}) VALUES ({placeholders})
+        ON CONFLICT (ticker_usd, fecha) DO UPDATE SET {actualizaciones}
+        """,
+        [tuple(f.get(c) for c in columnas) for f in filas],
+    )
