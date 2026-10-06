@@ -35,8 +35,13 @@ Set-Location -Path $PSScriptRoot
 
 # Mismo certificado combinado que se usa en las corridas manuales (ver
 # Troubleshooting en README.md) -- se fija aca por las dudas de que no este
-# en .env, no hace daño si ya esta.
+# en .env, no hace daño si ya esta. huggingface_hub (sentimiento_noticias.py)
+# usa otra libreria HTTP que no respeta REQUESTS_CA_BUNDLE -- hacen falta
+# tambien SSL_CERT_FILE/CURL_CA_BUNDLE, no hacen daño para el resto de los pasos.
 $env:REQUESTS_CA_BUNDLE = Join-Path $PSScriptRoot "combined_ca.pem"
+$env:SSL_CERT_FILE = Join-Path $PSScriptRoot "combined_ca.pem"
+$env:CURL_CA_BUNDLE = Join-Path $PSScriptRoot "combined_ca.pem"
+$env:HF_HUB_CACHE = Join-Path $PSScriptRoot ".cache_hf"
 
 $python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 
@@ -64,8 +69,10 @@ Run-Paso "precios_historicos" "precios_historicos.py"
 Run-Paso "analisis_fundamental_liviano" "analisis_fundamental_liviano.py"
 Run-Paso "macro_diario" "macro_diario.py"
 Run-Paso "dolar_argentina" "dolar_argentina.py"
+Run-Paso "sentimiento_noticias" "sentimiento_noticias.py"
 Run-Paso "gold_lynch" "gold\lynch.py"
 Run-Paso "gold_comparables" "gold\comparables.py"
 Run-Paso "gold_macro_sensitivity" "gold\macro_sensitivity.py"
 Run-Paso "gold_technical" "gold\technical.py"
 Run-Paso "gold_salud_financiera" "gold\salud_financiera.py"
+Run-Paso "gold_sentimiento" "gold\sentimiento.py"

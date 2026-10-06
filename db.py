@@ -1,7 +1,7 @@
 """
 db.py
 -----
-Warehouse local en DuckDB (un solo archivo, sin servidor) con 8 tablas:
+Warehouse local en DuckDB (un solo archivo, sin servidor) con 9 tablas:
 
   dim_empresa                  - descriptiva, cambia poco (PK: ticker_usd)
   fact_metrics_daily           - ratios de valuacion y momentum, una fila por dia (PK: ticker_usd + fecha)
@@ -14,6 +14,8 @@ Warehouse local en DuckDB (un solo archivo, sin servidor) con 8 tablas:
                                   serie y dia (PK: serie + fecha) -- grano de mercado, no de empresa
   fact_consenso_analistas      - precio objetivo y recomendaciones de Wall Street, una fila por
                                   dia (PK: ticker_usd + fecha) -- ver consenso_analistas.py
+  fact_noticias                 - titulares + sentimiento FinBERT, una fila por titular unico
+                                  (PK: ticker_usd + titular) -- ver sentimiento_noticias.py
 
 listado_cedears.py, analisis_fundamental_liviano.py/_pesado.py,
 precios_historicos.py y macro_diario.py escriben cada uno las columnas/tablas
@@ -164,6 +166,18 @@ CREATE TABLE IF NOT EXISTS fact_consenso_analistas (
     rec_sell                INTEGER,
     rec_strong_sell         INTEGER,
     PRIMARY KEY (ticker_usd, fecha)
+);
+
+CREATE TABLE IF NOT EXISTS fact_noticias (
+    ticker_usd          VARCHAR,
+    titular             VARCHAR,
+    fuente              VARCHAR,
+    fecha_publicacion   TIMESTAMP,
+    link                VARCHAR,
+    sentimiento         VARCHAR,  -- 'positive' | 'negative' | 'neutral' (label de FinBERT)
+    score_sentimiento   DOUBLE,   -- confianza del label elegido (0-1, softmax)
+    fecha_procesado     DATE,
+    PRIMARY KEY (ticker_usd, titular)
 );
 
 -- Log append-only (sin PK a proposito): cada corrida de cada script deja una
@@ -450,6 +464,33 @@ def upsert_fact_consenso_analistas(con: duckdb.DuckDBPyConnection, filas: list[d
         f"""
         INSERT INTO fact_consenso_analistas ({", ".join(columnas)}) VALUES ({placeholders})
         ON CONFLICT (ticker_usd, fecha) DO UPDATE SET {actualizaciones}
+        """,
+        [tuple(f.get(c) for c in columnas) for f in filas],
+    )
+
+
+def titulares_ya_procesados(con: duckdb.DuckDBPyConnection, ticker_usd: str) -> set[str]:
+    """Titulares que ya tienen sentimiento calculado para este ticker --
+    para no volver a correr FinBERT (lo caro) sobre una noticia ya vista.
+    Un titular repetido (mismo texto, reeditado/sindicado por otro medio) es
+    el mismo PK, no hace falta reprocesarlo."""
+    filas = con.execute(
+        "SELECT titular FROM fact_noticias WHERE ticker_usd = ?", [ticker_usd]
+    ).fetchall()
+    return {f[0] for f in filas}
+
+
+def upsert_fact_noticias(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> None:
+    if not filas:
+        return
+    columnas = ["ticker_usd", "titular", "fuente", "fecha_publicacion", "link",
+                "sentimiento", "score_sentimiento", "fecha_procesado"]
+    placeholders = ", ".join("?" for _ in columnas)
+    actualizaciones = ", ".join(f"{c} = excluded.{c}" for c in columnas if c not in ("ticker_usd", "titular"))
+    con.executemany(
+        f"""
+        INSERT INTO fact_noticias ({", ".join(columnas)}) VALUES ({placeholders})
+        ON CONFLICT (ticker_usd, titular) DO UPDATE SET {actualizaciones}
         """,
         [tuple(f.get(c) for c in columnas) for f in filas],
     )

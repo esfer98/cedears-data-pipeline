@@ -9,3 +9,7 @@ jupyter
 ipykernel
 matplotlib
 seaborn
+# torch: instalar aparte con el indice CPU-only (mucho mas liviano que el
+# default, que trae CUDA) -- ver "Puesta en marcha" en el README:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+transformers

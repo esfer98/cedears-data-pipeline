@@ -20,6 +20,9 @@ cache/
 # Logs de las corridas via Task Scheduler (run_diario.ps1/run_semanal.ps1)
 logs/
 
+# Pesos de FinBERT (sentimiento_noticias.py) - ~400MB, se descargan solos la primera vez
+.cache_hf/
+
 # VS Code
 .vscode/
 

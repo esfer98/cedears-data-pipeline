@@ -44,6 +44,7 @@ flowchart LR
         macro["macro_diario.py<br/>tasas, VIX, FX, commodities, indices"]
         dolar["dolar_argentina.py<br/>oficial/blue/MEP/CCL (dolarapi.com)"]
         consenso["consenso_analistas.py<br/>precio objetivo + recomendaciones (semanal)"]
+        noticias["sentimiento_noticias.py<br/>titulares + FinBERT (Google News RSS)"]
         db["db.py<br/>upsert a DuckDB"]
     end
 
@@ -55,6 +56,7 @@ flowchart LR
         fe[("fact_eps_trimestral")]
         fma[("fact_macro_daily")]
         fca[("fact_consenso_analistas")]
+        fn[("fact_noticias")]
     end
 
     subgraph Gold["Gold — una metodologia por archivo, columnas prefijadas"]
@@ -63,6 +65,7 @@ flowchart LR
         macrosens["gold/macro_sensitivity.py<br/>vista gold_macro_sensitivity (columnas macro_*)"]
         tech["gold/technical.py<br/>vista gold_technical (columnas tech_*)"]
         salud["gold/salud_financiera.py<br/>vista gold_salud_financiera (columnas salud_*)"]
+        sent["gold/sentimiento.py<br/>vista gold_sentimiento (columnas sent_*)"]
         quant["gold/quant.py (futuro)"]
     end
 
@@ -78,18 +81,21 @@ flowchart LR
     cache --> precios --> db
     cache --> macro --> db
     cache --> consenso --> db
+    noticias --> db
     dolar --> db
-    db --> dim & fm & fp & fi & fe & fma & fca
+    db --> dim & fm & fp & fi & fe & fma & fca & fn
     dim & fm & fp & fi & fe --> lynch & comp & quant
     dim & fp & fma --> macrosens
     fp --> tech
     fm & fi --> salud
-    dim & fm & fp & fi & fe & fma & fca --> nb
+    fn --> sent
+    dim & fm & fp & fi & fe & fma & fca & fn --> nb
     lynch --> nb
     comp --> nb
     macrosens --> nb
     tech --> nb
     salud --> nb
+    sent --> nb
 ```
 
 **Estado actual:** Transform y Load viven juntos, en Python (pandas), dentro de
@@ -150,6 +156,14 @@ modelo dimensional:
   semanal (mismo motivo que `analisis_fundamental_pesado.py`: no cambia
   todos los días). Un ticker sin cobertura de analistas no es un error:
   queda la fila con las columnas de recomendación en NULL.
+- **`fact_noticias`** — un titular por fila (PK `ticker_usd` + `titular`):
+  texto, fuente, fecha de publicación, link y sentimiento FinBERT
+  (`positive`/`negative`/`neutral` + score de confianza) — ver
+  `sentimiento_noticias.py`. Titulares de Google News RSS (gratis, sin
+  auth; **no** usa `yf.Ticker().news` — ese endpoint de yfinance 1.7.0 está
+  roto, devuelve vacío hasta para AAPL, verificado en vivo). El PK es el
+  titular mismo: un titular repetido/resindicado no se reprocesa con
+  FinBERT (lo caro de esta tabla es la inferencia, no el fetch).
 - **`log_ejecuciones`** — append-only, una fila por corrida de cada script
   (`ok`/`error`, cuántas filas afectó, y el detalle si falló). Sirve para
   tres cosas: idempotencia (no repetir un job que ya corrió hoy si el
@@ -169,11 +183,13 @@ python precios_historicos.py             # OHLCV (Yahoo)
 python analisis_fundamental_liviano.py   # .info: P/E, P/B, market cap... (Yahoo, 1 call/ticker)
 python macro_diario.py                   # tasas, VIX, FX, commodities, indices (Yahoo, 16 series)
 python dolar_argentina.py                # oficial/blue/MEP/CCL/mayorista/cripto/tarjeta (dolarapi.com, 7 cotizaciones)
+python sentimiento_noticias.py           # titulares (Google News RSS) + sentimiento FinBERT -> fact_noticias
 python gold/lynch.py                     # recalcula la vista gold_lynch (no pide datos nuevos)
 python gold/comparables.py               # recalcula la vista gold_comparables (idem)
 python gold/macro_sensitivity.py         # recalcula la vista gold_macro_sensitivity (idem, va despues de lynch.py -- su reporte hace JOIN contra gold_lynch)
 python gold/technical.py                 # recalcula la vista gold_technical (idem, solo lee fact_precios_daily)
 python gold/salud_financiera.py          # recalcula la vista gold_salud_financiera (idem, lee fact_metrics_daily + fact_balance_cashflow_annual)
+python gold/sentimiento.py               # recalcula la vista gold_sentimiento (idem, agrega fact_noticias de los ultimos 7 dias)
 
 # Semanal (domingos)
 python listado_cedears.py                # universo IOL -> dim_empresa + cedears_normalizados.csv
@@ -231,7 +247,8 @@ cambia cada fuente:
 | Diaria (~20:00 ART) | `analisis_fundamental_liviano.py` | Ratios como P/E se mueven con el precio, aunque la empresa no cambie |
 | Diaria (~20:00 ART) | `macro_diario.py` | Tasas/VIX/FX/commodities cambian todos los días hábiles, igual que el precio |
 | Diaria (~20:00 ART) | `dolar_argentina.py` | El dólar (oficial/blue/MEP/CCL) cambia todos los días; la API no tiene histórico, así que hay que pedirlo todos los días para acumularlo |
-| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py`, `gold/technical.py`, `gold/salud_financiera.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
+| Diaria (~20:00 ART) | `sentimiento_noticias.py` | Hay noticias nuevas todos los días; el cache por titular evita reprocesar con FinBERT lo que ya se vio |
+| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py`, `gold/technical.py`, `gold/salud_financiera.py`, `gold/sentimiento.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
 | Semanal (domingos ~20:00 ART) | `listado_cedears.py` | El universo de CEDEARs rara vez cambia |
 | Semanal (domingos ~20:00 ART) | `analisis_fundamental_pesado.py` | Los balances solo cambian ~4 veces al año |
 | Semanal (domingos ~20:00 ART) | `consenso_analistas.py` | Los precios objetivo/recomendaciones no se actualizan todos los días |
@@ -279,8 +296,9 @@ cedears-data-pipeline/
 ├── macro_diario.py         # tasas/VIX/FX/commodities/indices de Yahoo -> fact_macro_daily
 ├── dolar_argentina.py      # oficial/blue/MEP/CCL/mayorista/cripto/tarjeta de dolarapi.com -> fact_macro_daily
 ├── consenso_analistas.py   # precio objetivo + recomendaciones de Yahoo (semanal) -> fact_consenso_analistas
+├── sentimiento_noticias.py # titulares (Google News RSS) + sentimiento FinBERT -> fact_noticias
 ├── correcciones_sector.py  # override manual de sector cuando Yahoo clasifica mal -> dim_empresa.sector_corregido
-├── run_diario.ps1          # wrapper para Task Scheduler: precios + liviano + macro + dolar + gold (diario)
+├── run_diario.ps1          # wrapper para Task Scheduler: precios + liviano + macro + dolar + noticias + gold (diario)
 ├── run_semanal.ps1         # wrapper para Task Scheduler: listado_cedears + pesado + consenso (semanal)
 ├── estado_pipeline.py      # tablero de salud: ultima corrida (ok/error) de cada script
 ├── gold/                   # una metodologia de analisis = un archivo, columnas prefijadas
@@ -288,7 +306,8 @@ cedears-data-pipeline/
 │   ├── comparables.py      # vista gold_comparables (empresa vs. mediana de su sector + pares similares)
 │   ├── macro_sensitivity.py  # vista gold_macro_sensitivity (correlacion retorno vs. tasa UST10Y/30Y)
 │   ├── technical.py        # vista gold_technical (SMA50/200, RSI-14, momentum 1/3/6m)
-│   └── salud_financiera.py # vista gold_salud_financiera (score de liquidez/apalancamiento/rentabilidad/cobertura)
+│   ├── salud_financiera.py # vista gold_salud_financiera (score de liquidez/apalancamiento/rentabilidad/cobertura)
+│   └── sentimiento.py      # vista gold_sentimiento (agrega fact_noticias a score por empresa, ventana 7 dias)
 ├── notebooks/
 │   ├── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción, sensibilidad a tasa)
 │   ├── eda_brasil.ipynb    # BDR + ADR directo de Brasil: retorno limpio vs. cambiario (USDBRL) y correlación vs. USDBRL/Bovespa
@@ -322,7 +341,11 @@ registrado como "Python 3 (.venv)" — si VS Code no lo detecta solo, `Ctrl+Shif
 5. Instalar dependencias:
    ```bash
    pip install -r requirements.txt
+   pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU-only, mas liviano que el default (CUDA)
    ```
+   `torch`/`transformers` son para `sentimiento_noticias.py` (FinBERT) — la
+   primera vez que corre ese script baja además los pesos del modelo
+   (~400MB desde Hugging Face, quedan cacheados en disco).
 
 6. Configurar credenciales: copiar `.env.example` a `.env` y completar
    con tu usuario y clave de IOL.
@@ -339,11 +362,13 @@ registrado como "Python 3 (.venv)" — si VS Code no lo detecta solo, `Ctrl+Shif
    python macro_diario.py
    python dolar_argentina.py
    python consenso_analistas.py
+   python sentimiento_noticias.py
    python gold/lynch.py
    python gold/comparables.py
    python gold/macro_sensitivity.py
    python gold/technical.py
    python gold/salud_financiera.py
+   python gold/sentimiento.py
    ```
 
 ## Notas
