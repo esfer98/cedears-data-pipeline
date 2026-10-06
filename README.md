@@ -255,7 +255,8 @@ cedears-data-pipeline/
 │   └── macro_sensitivity.py  # vista gold_macro_sensitivity (correlacion retorno vs. tasa UST10Y/30Y)
 ├── notebooks/
 │   ├── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción, sensibilidad a tasa)
-│   └── eda_brasil.ipynb    # Recorte a las BDRs brasileñas: retorno limpio vs. cambiario (USDBRL) y correlación vs. USDBRL/Bovespa
+│   ├── eda_brasil.ipynb    # BDR + ADR directo de Brasil: retorno limpio vs. cambiario (USDBRL) y correlación vs. USDBRL/Bovespa
+│   └── eda_argentina.ipynb # Panel BYMA/Merval + Vista: brecha cambiaria implícita (ADR vs. local) para las 13 con doble listado
 ├── cache/                  # cache en disco por ticker (evita re-pedirle a Yahoo)
 └── data/                   # se genera solo: CSVs + warehouse.duckdb
 ```
