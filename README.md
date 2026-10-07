@@ -311,7 +311,8 @@ cedears-data-pipeline/
 ├── notebooks/
 │   ├── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción, sensibilidad a tasa)
 │   ├── eda_brasil.ipynb    # BDR + ADR directo de Brasil: retorno limpio vs. cambiario (USDBRL) y correlación vs. USDBRL/Bovespa
-│   └── eda_argentina.ipynb # Panel BYMA/Merval + Vista: brecha cambiaria implícita (ADR vs. local) para las 13 con doble listado
+│   ├── eda_argentina.ipynb # Panel BYMA/Merval + Vista: brecha cambiaria implícita (ADR vs. local) para las 13 con doble listado
+│   └── portfolio_analytics.ipynb # Cartera concentrada (seleccionar_cartera.py): volatilidad, correlación, drawdowns, CVaR, frontera eficiente
 ├── cache/                  # cache en disco por ticker (evita re-pedirle a Yahoo)
 └── data/                   # se genera solo: CSVs + warehouse.duckdb
 ```
