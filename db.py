@@ -378,18 +378,41 @@ def registrar(con: duckdb.DuckDBPyConnection, script: str):
 
 
 def ya_corrio_hoy(con: duckdb.DuckDBPyConnection, script: str) -> bool:
-    """True si `script` ya tuvo una corrida exitosa hoy. Para la guarda de
-    idempotencia de los jobs diarios: si Task Scheduler dispara un catch-up
-    (PC apagada a la hora programada, corre al prenderla) y el job normal de
-    esa misma noche ya habia corrido bien, no tiene sentido repetirlo."""
-    return ya_corrio_reciente(con, script, dias=1)
+    """True si `script` ya tuvo una corrida exitosa HOY (fecha de calendario).
+    Para la guarda de idempotencia de los jobs diarios: si Task Scheduler
+    dispara un catch-up (PC apagada a la hora programada, corre al
+    prenderla) y el job normal de esa misma noche ya habia corrido bien, no
+    tiene sentido repetirlo.
+
+    Bug real encontrado el 07/10/2026: esto delegaba a
+    ya_corrio_reciente(dias=1), que filtra `inicio >= CURRENT_DATE - INTERVAL
+    1 DAY` -- eso incluye TODO el dia de ayer, no solo "hoy". Una corrida de
+    ayer a la mañana (ej. un catch-up a las 09:05) contaba como "ya corrio
+    hoy" en la corrida de esta noche a las 20:00, y el paso se saltaba un
+    dia entero sin que quedara registrado en ningun lado -- asi es como
+    precios_historicos/liviano/macro_diario quedaron 2 dias sin actualizarse
+    (05/10 a 07/10) sin que el pipeline fallara ni lo reportara: el guard
+    dijo "ya corrio", asi que ni siquiera lo intento. Ahora compara contra
+    CURRENT_DATE directo (medianoche de hoy), no contra una ventana movil."""
+    fila = con.execute(
+        "SELECT COUNT(*) FROM log_ejecuciones "
+        "WHERE script = ? AND estado = 'ok' AND inicio >= CURRENT_DATE",
+        [script],
+    ).fetchone()
+    return fila[0] > 0
 
 
 def ya_corrio_reciente(con: duckdb.DuckDBPyConnection, script: str, dias: int) -> bool:
-    """True si `script` tuvo una corrida exitosa en los ultimos `dias` dias.
-    Generalizacion de ya_corrio_hoy() para jobs que no son diarios -- p.ej.
+    """True si `script` tuvo una corrida exitosa en los ultimos `dias` dias
+    (ventana movil, no fecha de calendario). Para jobs no diarios -- p.ej.
     el fetch pesado semanal usa dias=6: si por catch-up termina corriendo el
-    lunes en vez del domingo, no hace falta que vuelva a correr esa semana."""
+    lunes en vez del domingo, no hace falta que vuelva a correr esa semana.
+
+    OJO: dias=1 NO es lo mismo que ya_corrio_hoy() -- esto es una ventana de
+    24hs corrida desde CURRENT_DATE (medianoche), no "hoy" en sentido de
+    calendario. Para la guarda diaria usar ya_corrio_hoy(), no esto con
+    dias=1 (ese fue exactamente el bug que tenia ya_corrio_hoy() hasta
+    07/10/2026 -- ver su docstring)."""
     fila = con.execute(
         "SELECT COUNT(*) FROM log_ejecuciones "
         "WHERE script = ? AND estado = 'ok' AND inicio >= CURRENT_DATE - INTERVAL (?) DAY",
