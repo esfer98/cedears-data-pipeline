@@ -29,10 +29,26 @@ Proceso (4 pasos, mismo orden que se charló antes de armar esto):
        - consenso de analistas con upside negativo o mayoría "sell"
        - sentimiento de noticias "Negativo"
 
-  4. DIVERSIFICACIÓN SECTORIAL -- recorre el ranking de arriba hacia
-     abajo, tope de `MAX_POR_SECTOR` por sector, hasta completar
-     `TAMANIO_CARTERA`. Mismo criterio que usamos armando la cartera de
-     Brasil a mano (Itaú + Ambev + Tim, no 3 bancos).
+  4. DIVERSIFICACIÓN SECTORIAL *Y* REGIONAL -- recorre el ranking de
+     arriba hacia abajo, tope de `MAX_POR_SECTOR` por sector Y
+     `MAX_POR_REGION` por región, hasta completar `TAMANIO_CARTERA`.
+
+     La región no sale de `dim_empresa.pais_origen` tal cual -- ese campo
+     es el domicilio LEGAL/fiscal de Yahoo, no necesariamente dónde está
+     el negocio real (mismo problema que encontramos con Vista Energy:
+     domicilio México, negocio Vaca Muerta/Argentina). Se vio corriendo
+     portfolio_analytics.ipynb: PDD y TCOM (ambas 100% negocio chino)
+     figuran como "Ireland"/"Singapore" en pais_origen, y terminaron
+     correlacionando 0.59 entre sí sin que el tope por sector lo
+     detectara (están en sectores GICS distintos). REGION_REAL corrige
+     esos casos conocidos a mano -- mismo patrón que
+     correcciones_sector.py, pero acá vive en este archivo porque es
+     chico y específico a la selección de cartera, no al warehouse.
+
+     Para `mercado IN ('argentina_local', 'brasil')` se usa el panel
+     entero como región (todas las locales de un país comparten el mismo
+     tipo de cambio/macro, no tiene sentido separarlas por sector GICS
+     para este propósito).
 
 Correr: python seleccionar_cartera.py [tamanio]   (default 9)
 """
@@ -45,13 +61,28 @@ import db
 
 TAMANIO_CARTERA_DEFAULT = 9
 MAX_POR_SECTOR = 2
+MAX_POR_REGION = 2
 UMBRAL_GANANCIA_COLAPSADA = -20  # mismo que gold/lynch.py usa para "Recuperable"
+
+# Casos donde pais_origen de Yahoo es el domicilio legal/fiscal, no el pais
+# real del negocio -- agregar acá si aparece un caso nuevo (mismo criterio
+# que correcciones_sector.py: no inventar, solo corregir lo verificado).
+REGION_REAL = {
+    "PDD": "China",
+    "TCOM": "China",
+}
+
+
+def region_de(fila) -> str:
+    if fila["mercado"] in ("argentina_local", "brasil"):
+        return fila["mercado"]  # el panel local entero comparte macro/FX, no tiene sentido separarlo por sector
+    return REGION_REAL.get(fila["ticker_usd"], fila["pais_origen"])
 
 
 def obtener_candidatos(con) -> pd.DataFrame:
     q = """
     SELECT
-        l.ticker_usd, l.nombre_empresa, l.sector, l.mercado,
+        l.ticker_usd, l.nombre_empresa, l.sector, l.mercado, l.pais_origen,
         l.lynch_categoria_auto, l.lynch_checklist_score,
         l.crecimiento_ingresos_anual_pct, l.crecimiento_ganancia_anual_pct,
         c.comp_pe_vs_sector_pct, c.comp_percentil_crecimiento_en_sector,
@@ -120,18 +151,26 @@ def marcar_alertas_externas(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def elegir_diversificado(df: pd.DataFrame, tamanio: int, max_por_sector: int) -> pd.DataFrame:
+def elegir_diversificado(df: pd.DataFrame, tamanio: int, max_por_sector: int, max_por_region: int = MAX_POR_REGION) -> pd.DataFrame:
     elegidos = []
     conteo_sector: dict[str, int] = {}
+    conteo_region: dict[str, int] = {}
     for _, fila in df.iterrows():
         if len(elegidos) >= tamanio:
             break
         sector = fila["sector"]
+        region = region_de(fila)
         if conteo_sector.get(sector, 0) >= max_por_sector:
+            continue
+        if conteo_region.get(region, 0) >= max_por_region:
             continue
         elegidos.append(fila)
         conteo_sector[sector] = conteo_sector.get(sector, 0) + 1
-    return pd.DataFrame(elegidos)
+        conteo_region[region] = conteo_region.get(region, 0) + 1
+    resultado = pd.DataFrame(elegidos)
+    if not resultado.empty:
+        resultado["region"] = resultado.apply(region_de, axis=1)
+    return resultado
 
 
 def main() -> None:
@@ -150,9 +189,9 @@ def main() -> None:
 
     elegidos = elegir_diversificado(rankeados, tamanio, MAX_POR_SECTOR)
 
-    print(f"\n=== Cartera seleccionada ({len(elegidos)} empresas, max {MAX_POR_SECTOR} por sector) ===\n")
+    print(f"\n=== Cartera seleccionada ({len(elegidos)} empresas, max {MAX_POR_SECTOR} por sector, max {MAX_POR_REGION} por región) ===\n")
     cols = [
-        "ticker_usd", "nombre_empresa", "sector", "score_compuesto",
+        "ticker_usd", "nombre_empresa", "sector", "region", "score_compuesto",
         "lynch_checklist_score", "comp_pe_vs_sector_pct", "salud_score", "salud_evaluables",
         "dias_precio", "tech_rsi_senal",
     ]
