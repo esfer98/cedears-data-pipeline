@@ -26,6 +26,15 @@ ni numpy):
      aproximacion de 21/63/126 dias HABILES (no de calendario) por mes --
      convencion estandar en finanzas, evita un self-join correlacionado
      caro por fecha calendario exacta.
+  5. tech_volumen_prom_30d / tech_volumen_tendencia_pct: promedio de
+     volumen de los ultimos 30 dias, y cuanto cambio contra los 90 dias
+     ANTERIORES a esa ventana (dias 31 a 120 atras) -- mismo calculo que
+     se hizo a mano analizando el volumen "agotandose" de $MU (ver
+     notebooks/eda_cedears.ipynb seccion 8), ahora disponible para las
+     420 sin repetirlo a mano cada vez. Positivo = mas volumen que antes,
+     negativo = menos (tipico antes de un movimiento fuerte, para
+     cualquier lado -- esto NO dice la direccion, solo que hay menos
+     gente operando).
 
 Correr: python gold/technical.py
 """
@@ -51,6 +60,14 @@ WITH precios AS (
     FROM fact_precios_daily
     WHERE adj_close IS NOT NULL
 ),
+volumen AS (
+    SELECT
+        ticker_usd, fecha,
+        AVG(volume) OVER (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS vol_prom_30d,
+        AVG(volume) OVER (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN 119 PRECEDING AND 30 PRECEDING) AS vol_prom_90d_previo
+    FROM fact_precios_daily
+    WHERE volume IS NOT NULL
+),
 rsi_base AS (
     SELECT ticker_usd, fecha,
            adj_close - LAG(adj_close) OVER (PARTITION BY ticker_usd ORDER BY fecha) AS delta
@@ -69,9 +86,11 @@ combinado AS (
     SELECT
         p.ticker_usd, p.fecha, p.adj_close, p.sma50, p.sma200, p.dias_sma200,
         p.precio_1m, p.precio_3m, p.precio_6m,
-        r.avg_gain, r.avg_loss, r.dias_rsi
+        r.avg_gain, r.avg_loss, r.dias_rsi,
+        v.vol_prom_30d, v.vol_prom_90d_previo
     FROM precios p
     JOIN rsi r USING (ticker_usd, fecha)
+    LEFT JOIN volumen v USING (ticker_usd, fecha)
 )
 SELECT
     ticker_usd, fecha,
@@ -90,7 +109,11 @@ SELECT
     END AS tech_rsi_senal,
     CASE WHEN precio_1m IS NOT NULL THEN ROUND((adj_close / precio_1m - 1) * 100, 1) END AS tech_retorno_1m_pct,
     CASE WHEN precio_3m IS NOT NULL THEN ROUND((adj_close / precio_3m - 1) * 100, 1) END AS tech_retorno_3m_pct,
-    CASE WHEN precio_6m IS NOT NULL THEN ROUND((adj_close / precio_6m - 1) * 100, 1) END AS tech_retorno_6m_pct
+    CASE WHEN precio_6m IS NOT NULL THEN ROUND((adj_close / precio_6m - 1) * 100, 1) END AS tech_retorno_6m_pct,
+    ROUND(vol_prom_30d, 0) AS tech_volumen_prom_30d,
+    CASE WHEN vol_prom_90d_previo IS NOT NULL
+         THEN ROUND((vol_prom_30d / NULLIF(vol_prom_90d_previo, 0) - 1) * 100, 1)
+    END AS tech_volumen_tendencia_pct
 FROM combinado
 QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker_usd ORDER BY fecha DESC) = 1
 """

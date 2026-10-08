@@ -305,11 +305,11 @@ cedears-data-pipeline/
 │   ├── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)
 │   ├── comparables.py      # vista gold_comparables (empresa vs. mediana de su sector + pares similares)
 │   ├── macro_sensitivity.py  # vista gold_macro_sensitivity (correlacion retorno vs. tasa UST10Y/30Y)
-│   ├── technical.py        # vista gold_technical (SMA50/200, RSI-14, momentum 1/3/6m)
+│   ├── technical.py        # vista gold_technical (SMA50/200, RSI-14, momentum 1/3/6m, tendencia de volumen)
 │   ├── salud_financiera.py # vista gold_salud_financiera (score de liquidez/apalancamiento/rentabilidad/cobertura)
 │   └── sentimiento.py      # vista gold_sentimiento (agrega fact_noticias a score por empresa, ventana 7 dias)
 ├── notebooks/
-│   ├── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción, sensibilidad a tasa)
+│   ├── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción + volumen histórico, sensibilidad a tasa, técnico, salud financiera, consenso, sentimiento)
 │   ├── eda_brasil.ipynb    # BDR + ADR directo de Brasil: retorno limpio vs. cambiario (USDBRL) y correlación vs. USDBRL/Bovespa
 │   ├── eda_argentina.ipynb # Panel BYMA/Merval + Vista: brecha cambiaria implícita (ADR vs. local) para las 13 con doble listado
 │   └── portfolio_analytics.ipynb # Cartera concentrada (seleccionar_cartera.py): volatilidad, correlación, drawdowns, CVaR, frontera eficiente
