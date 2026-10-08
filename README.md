@@ -64,6 +64,7 @@ flowchart LR
         comp["gold/comparables.py<br/>vista gold_comparables (columnas comp_*)"]
         macrosens["gold/macro_sensitivity.py<br/>vista gold_macro_sensitivity (columnas macro_*)"]
         tech["gold/technical.py<br/>vista gold_technical (columnas tech_*)"]
+        ondas["gold/ondas.py<br/>tablas gold_pivots + gold_ondas (columnas onda_*)"]
         salud["gold/salud_financiera.py<br/>vista gold_salud_financiera (columnas salud_*)"]
         sent["gold/sentimiento.py<br/>vista gold_sentimiento (columnas sent_*)"]
         quant["gold/quant.py (futuro)"]
@@ -87,6 +88,7 @@ flowchart LR
     dim & fm & fp & fi & fe --> lynch & comp & quant
     dim & fp & fma --> macrosens
     fp --> tech
+    fp --> ondas
     fm & fi --> salud
     fn --> sent
     dim & fm & fp & fi & fe & fma & fca & fn --> nb
@@ -94,6 +96,7 @@ flowchart LR
     comp --> nb
     macrosens --> nb
     tech --> nb
+    ondas --> nb
     salud --> nb
     sent --> nb
 ```
@@ -188,6 +191,7 @@ python gold/lynch.py                     # recalcula la vista gold_lynch (no pid
 python gold/comparables.py               # recalcula la vista gold_comparables (idem)
 python gold/macro_sensitivity.py         # recalcula la vista gold_macro_sensitivity (idem, va despues de lynch.py -- su reporte hace JOIN contra gold_lynch)
 python gold/technical.py                 # recalcula la vista gold_technical (idem, solo lee fact_precios_daily)
+python gold/ondas.py                     # recalcula las TABLAS gold_pivots/gold_ondas (ZigZag + Fibonacci + Elliott candidato; en Python, no es vista)
 python gold/salud_financiera.py          # recalcula la vista gold_salud_financiera (idem, lee fact_metrics_daily + fact_balance_cashflow_annual)
 python gold/sentimiento.py               # recalcula la vista gold_sentimiento (idem, agrega fact_noticias de los ultimos 7 dias)
 
@@ -248,7 +252,7 @@ cambia cada fuente:
 | Diaria (~20:00 ART) | `macro_diario.py` | Tasas/VIX/FX/commodities cambian todos los días hábiles, igual que el precio |
 | Diaria (~20:00 ART) | `dolar_argentina.py` | El dólar (oficial/blue/MEP/CCL) cambia todos los días; la API no tiene histórico, así que hay que pedirlo todos los días para acumularlo |
 | Diaria (~20:00 ART) | `sentimiento_noticias.py` | Hay noticias nuevas todos los días; el cache por titular evita reprocesar con FinBERT lo que ya se vio |
-| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py`, `gold/technical.py`, `gold/salud_financiera.py`, `gold/sentimiento.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
+| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py`, `gold/technical.py`, `gold/ondas.py`, `gold/salud_financiera.py`, `gold/sentimiento.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
 | Semanal (domingos ~20:00 ART) | `listado_cedears.py` | El universo de CEDEARs rara vez cambia |
 | Semanal (domingos ~20:00 ART) | `analisis_fundamental_pesado.py` | Los balances solo cambian ~4 veces al año |
 | Semanal (domingos ~20:00 ART) | `consenso_analistas.py` | Los precios objetivo/recomendaciones no se actualizan todos los días |
@@ -305,11 +309,12 @@ cedears-data-pipeline/
 │   ├── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)
 │   ├── comparables.py      # vista gold_comparables (empresa vs. mediana de su sector + pares similares)
 │   ├── macro_sensitivity.py  # vista gold_macro_sensitivity (correlacion retorno vs. tasa UST10Y/30Y)
-│   ├── technical.py        # vista gold_technical (SMA50/200, RSI-14, momentum 1/3/6m, tendencia de volumen)
+│   ├── technical.py        # vista gold_technical (SMA50/200, RSI-14, momentum 1/3/6m, tendencia de volumen, Bollinger, MACD, ATR, distancia a max/min 52 semanas)
+│   ├── ondas.py            # tablas gold_pivots + gold_ondas (swings ZigZag, niveles de Fibonacci, conteo candidato de Elliott) -- unica capa gold materializada, no es vista
 │   ├── salud_financiera.py # vista gold_salud_financiera (score de liquidez/apalancamiento/rentabilidad/cobertura)
 │   └── sentimiento.py      # vista gold_sentimiento (agrega fact_noticias a score por empresa, ventana 7 dias)
 ├── notebooks/
-│   ├── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción + volumen histórico, sensibilidad a tasa, técnico, salud financiera, consenso, sentimiento)
+│   ├── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción + volumen histórico, sensibilidad a tasa, técnico, salud financiera, consenso, sentimiento, ondas/Fibonacci/Elliott con backtest de la señal)
 │   ├── eda_brasil.ipynb    # BDR + ADR directo de Brasil: retorno limpio vs. cambiario (USDBRL) y correlación vs. USDBRL/Bovespa
 │   ├── eda_argentina.ipynb # Panel BYMA/Merval + Vista: brecha cambiaria implícita (ADR vs. local) para las 13 con doble listado
 │   └── portfolio_analytics.ipynb # Cartera concentrada (seleccionar_cartera.py): volatilidad, correlación, drawdowns, CVaR, frontera eficiente
@@ -368,6 +373,7 @@ registrado como "Python 3 (.venv)" — si VS Code no lo detecta solo, `Ctrl+Shif
    python gold/comparables.py
    python gold/macro_sensitivity.py
    python gold/technical.py
+   python gold/ondas.py
    python gold/salud_financiera.py
    python gold/sentimiento.py
    ```

@@ -35,6 +35,28 @@ ni numpy):
      negativo = menos (tipico antes de un movimiento fuerte, para
      cualquier lado -- esto NO dice la direccion, solo que hay menos
      gente operando).
+  6. tech_bb_pct_b / tech_bb_ancho_pct: Bandas de Bollinger (SMA20 +/- 2
+     desvios). %B = donde esta el precio dentro de la banda (0 = banda
+     inferior, 100 = superior, puede salirse). Ancho = (sup - inf) / SMA20;
+     un ancho muy bajo ("squeeze") es la version numerica de "el precio
+     esta comprimido" -- igual que el volumen, no dice para que lado sale.
+  7. tech_macd / tech_macd_hist_pct / tech_macd_cruce: MACD 12-26-9. Las
+     EMA son recursivas y no salen con un AVG de ventana; se usa la
+     identidad EMA_t = SUM(x_k * w^k) / SUM(w^k) con w = 1/(1-alpha), que
+     si es una suma acumulada (equivale a pandas ewm(adjust=True)). Como
+     w^k crece exponencialmente, se limita a los ultimos 400 dias por
+     ticker: sobra para que la EMA26 converja y evita desbordar un DOUBLE
+     cuando la historia siga creciendo. El histograma va en % del precio
+     para que sea comparable entre tickers.
+  8. tech_atr14_pct: Average True Range de 14 dias en % del precio --
+     cuanto se mueve la accion en un dia tipico contando gaps. Usa
+     high/low/close SIN ajustar (el true range es intradiario).
+  9. tech_dist_max_52s_pct / tech_dist_min_52s_pct: distancia al maximo y
+     minimo de 52 semanas (252 dias habiles).
+
+Los swings (ZigZag), niveles de Fibonacci y el conteo candidato de Elliott
+NO estan aca: dependen del recorrido completo del precio y no se pueden
+expresar como vista -- ver gold/ondas.py.
 
 Correr: python gold/technical.py
 """
@@ -54,6 +76,10 @@ WITH precios AS (
         AVG(adj_close) OVER (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) AS sma50,
         AVG(adj_close) OVER (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) AS sma200,
         COUNT(*) OVER (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) AS dias_sma200,
+        AVG(adj_close) OVER (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS sma20,
+        STDDEV_POP(adj_close) OVER (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS std20,
+        MAX(adj_close) OVER (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS max_52s,
+        MIN(adj_close) OVER (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS min_52s,
         LAG(adj_close, 21) OVER (PARTITION BY ticker_usd ORDER BY fecha) AS precio_1m,
         LAG(adj_close, 63) OVER (PARTITION BY ticker_usd ORDER BY fecha) AS precio_3m,
         LAG(adj_close, 126) OVER (PARTITION BY ticker_usd ORDER BY fecha) AS precio_6m
@@ -82,15 +108,59 @@ rsi AS (
         COUNT(*) OVER (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS dias_rsi
     FROM rsi_base
 ),
+atr_base AS (
+    SELECT ticker_usd, fecha, close,
+           GREATEST(
+               high - low,
+               ABS(high - LAG(close) OVER (PARTITION BY ticker_usd ORDER BY fecha)),
+               ABS(low - LAG(close) OVER (PARTITION BY ticker_usd ORDER BY fecha))
+           ) AS true_range
+    FROM fact_precios_daily
+    WHERE close IS NOT NULL AND high IS NOT NULL AND low IS NOT NULL
+),
+atr AS (
+    SELECT ticker_usd, fecha, close,
+           AVG(true_range) OVER (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS atr14,
+           COUNT(true_range) OVER (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS dias_atr
+    FROM atr_base
+),
+macd_ventana AS (
+    SELECT ticker_usd, fecha, adj_close
+    FROM fact_precios_daily
+    WHERE adj_close IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker_usd ORDER BY fecha DESC) <= 400
+),
+macd_k AS (
+    SELECT *, ROW_NUMBER() OVER (PARTITION BY ticker_usd ORDER BY fecha) AS k
+    FROM macd_ventana
+),
+macd_ema AS (
+    SELECT ticker_usd, fecha, k,
+           SUM(adj_close * POWER(13.0 / 11, k)) OVER w / SUM(POWER(13.0 / 11, k)) OVER w
+         - SUM(adj_close * POWER(27.0 / 25, k)) OVER w / SUM(POWER(27.0 / 25, k)) OVER w AS macd
+    FROM macd_k
+    WINDOW w AS (PARTITION BY ticker_usd ORDER BY fecha ROWS UNBOUNDED PRECEDING)
+),
+macd AS (
+    SELECT ticker_usd, fecha, k, macd,
+           SUM(macd * POWER(10.0 / 8, k)) OVER w / SUM(POWER(10.0 / 8, k)) OVER w AS macd_senal
+    FROM macd_ema
+    WINDOW w AS (PARTITION BY ticker_usd ORDER BY fecha ROWS UNBOUNDED PRECEDING)
+),
 combinado AS (
     SELECT
         p.ticker_usd, p.fecha, p.adj_close, p.sma50, p.sma200, p.dias_sma200,
+        p.sma20, p.std20, p.max_52s, p.min_52s,
         p.precio_1m, p.precio_3m, p.precio_6m,
         r.avg_gain, r.avg_loss, r.dias_rsi,
-        v.vol_prom_30d, v.vol_prom_90d_previo
+        v.vol_prom_30d, v.vol_prom_90d_previo,
+        a.atr14, a.dias_atr, a.close AS close_sin_ajustar,
+        m.macd, m.macd_senal, m.k AS dias_macd
     FROM precios p
     JOIN rsi r USING (ticker_usd, fecha)
     LEFT JOIN volumen v USING (ticker_usd, fecha)
+    LEFT JOIN atr a USING (ticker_usd, fecha)
+    LEFT JOIN macd m USING (ticker_usd, fecha)
 )
 SELECT
     ticker_usd, fecha,
@@ -113,7 +183,15 @@ SELECT
     ROUND(vol_prom_30d, 0) AS tech_volumen_prom_30d,
     CASE WHEN vol_prom_90d_previo IS NOT NULL
          THEN ROUND((vol_prom_30d / NULLIF(vol_prom_90d_previo, 0) - 1) * 100, 1)
-    END AS tech_volumen_tendencia_pct
+    END AS tech_volumen_tendencia_pct,
+    CASE WHEN dias_sma200 >= 20 THEN ROUND((adj_close - (sma20 - 2 * std20)) / NULLIF(4 * std20, 0) * 100, 1) END AS tech_bb_pct_b,
+    CASE WHEN dias_sma200 >= 20 THEN ROUND(4 * std20 / NULLIF(sma20, 0) * 100, 1) END AS tech_bb_ancho_pct,
+    CASE WHEN dias_macd >= 35 THEN ROUND(macd, 3) END AS tech_macd,
+    CASE WHEN dias_macd >= 35 THEN ROUND((macd - macd_senal) / adj_close * 100, 2) END AS tech_macd_hist_pct,
+    CASE WHEN dias_macd >= 35 THEN (CASE WHEN macd > macd_senal THEN 'Alcista' ELSE 'Bajista' END) END AS tech_macd_cruce,
+    CASE WHEN dias_atr >= 14 THEN ROUND(atr14 / NULLIF(close_sin_ajustar, 0) * 100, 2) END AS tech_atr14_pct,
+    ROUND((adj_close / max_52s - 1) * 100, 1) AS tech_dist_max_52s_pct,
+    ROUND((adj_close / min_52s - 1) * 100, 1) AS tech_dist_min_52s_pct
 FROM combinado
 QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker_usd ORDER BY fecha DESC) = 1
 """
