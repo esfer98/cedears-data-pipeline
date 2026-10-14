@@ -48,7 +48,12 @@ load_dotenv()
 CACHE_DIR = Path("cache/fundamentals_pesado")
 CACHE_DIAS = 7  # cadencia semanal: los balances no cambian de un dia para el otro
 PAUSA_ENTRE_TICKERS = 1.5  # segundos -- 4 llamadas por ticker, mas presion sobre el rate limit
-DIAS_ENTRE_CORRIDAS = 6  # guarda de idempotencia: no repetir dentro de la misma semana
+# Guarda de idempotencia: evita repetir si la semanal corre dos veces el
+# mismo fin de semana (p.ej. catch-up + corrida normal). NO puede ser 6:
+# el 11/10 la corrida del domingo se salteo porque la anterior habia sido
+# un catch-up el LUNES 5/10 (6 dias y medio antes) y el dato quedo viejo
+# otra semana entera. 2 dias cubre el doble disparo sin tapar la semana siguiente.
+DIAS_ENTRE_CORRIDAS = 2
 
 # Sube este numero cada vez que obtener_datos_crudos() empiece a guardar un
 # campo nuevo: invalida el cache viejo (que no lo tiene) sin borrar la carpeta a mano.

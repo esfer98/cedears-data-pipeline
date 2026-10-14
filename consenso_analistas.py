@@ -37,7 +37,7 @@ load_dotenv()
 CACHE_DIR = Path("cache/consenso_analistas")
 CACHE_DIAS = 7  # cadencia semanal, mismo motivo que analisis_fundamental_pesado.py
 PAUSA_ENTRE_TICKERS = 1.2
-DIAS_ENTRE_CORRIDAS = 6
+DIAS_ENTRE_CORRIDAS = 2  # mismo motivo que analisis_fundamental_pesado.py
 
 VERSION_CACHE = 1
 

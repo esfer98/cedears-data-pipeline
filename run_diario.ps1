@@ -42,6 +42,7 @@ $env:REQUESTS_CA_BUNDLE = Join-Path $PSScriptRoot "combined_ca.pem"
 $env:SSL_CERT_FILE = Join-Path $PSScriptRoot "combined_ca.pem"
 $env:CURL_CA_BUNDLE = Join-Path $PSScriptRoot "combined_ca.pem"
 $env:HF_HUB_CACHE = Join-Path $PSScriptRoot ".cache_hf"
+$env:PYTHONIOENCODING = "utf-8"  # la salida va a archivo: sin esto Python escribe en cp1252 y los acentos llegan rotos al log
 
 $python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 
@@ -49,12 +50,28 @@ $logDir = Join-Path $PSScriptRoot "logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $logFile = Join-Path $logDir ("diario_{0}.log" -f (Get-Date -Format "yyyy-MM-dd_HHmmss"))
 
+# Cada paso corre en un proceso con su PROPIA consola oculta (Start-Process
+# -WindowStyle Hidden), no con "& $python" que comparte la consola de este
+# PowerShell. Visto el 11/10 y el 13/10: el crash de curl_cffi llega como
+# evento de cierre de consola (exit code 0xC000013A) y, con la consola
+# compartida, mataba tambien a este script -- el log se cortaba sin llegar
+# a los reintentos. Con consola propia solo muere el paso y se reintenta.
+# Probado con un crash real (access violation) y un evento de consola.
 function Run-Paso {
     param([string]$Nombre, [string]$Script, [int]$MaxIntentos = 3)
+    $salida = Join-Path $logDir "_tmp_$Nombre.out"
+    $errores = Join-Path $logDir "_tmp_$Nombre.err"
     for ($intento = 1; $intento -le $MaxIntentos; $intento++) {
         "=== $Nombre intento $intento/$MaxIntentos ($(Get-Date -Format s)) ===" | Out-File -FilePath $logFile -Append -Encoding utf8
-        & $python $Script 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
-        $exit = $LASTEXITCODE
+        $proc = Start-Process -FilePath $python -ArgumentList "`"$Script`"" -WorkingDirectory $PSScriptRoot `
+            -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $salida -RedirectStandardError $errores
+        foreach ($f in @($salida, $errores)) {
+            if (Test-Path $f) {
+                Get-Content -Path $f -Encoding UTF8 | Out-File -FilePath $logFile -Append -Encoding utf8
+                Remove-Item $f
+            }
+        }
+        $exit = $proc.ExitCode
         "=== $Nombre exit code: $exit ===" | Out-File -FilePath $logFile -Append -Encoding utf8
         if ($exit -eq 0) { return }
         if ($intento -lt $MaxIntentos) {

@@ -405,8 +405,8 @@ def ya_corrio_hoy(con: duckdb.DuckDBPyConnection, script: str) -> bool:
 def ya_corrio_reciente(con: duckdb.DuckDBPyConnection, script: str, dias: int) -> bool:
     """True si `script` tuvo una corrida exitosa en los ultimos `dias` dias
     (ventana movil, no fecha de calendario). Para jobs no diarios -- p.ej.
-    el fetch pesado semanal usa dias=6: si por catch-up termina corriendo el
-    lunes en vez del domingo, no hace falta que vuelva a correr esa semana.
+    los semanales usan dias=2: evita el doble disparo del mismo fin de semana
+    sin saltear la semana siguiente (con dias=6 se salteo el 11/10).
 
     OJO: dias=1 NO es lo mismo que ya_corrio_hoy() -- esto es una ventana de
     24hs corrida desde CURRENT_DATE (medianoche), no "hoy" en sentido de
