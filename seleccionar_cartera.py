@@ -16,6 +16,11 @@ Proceso (4 pasos, mismo orden que se charló antes de armar esto):
          tipo MGLU3/HAPV3 que vimos en Brasil: checklist alto, pero el
          negocio se cayó)
        - margen_neto_pct > 0 (gana plata)
+       - se puede operar: volumen promedio de 30 dias >= UMBRAL_VOLUMEN_BAJO
+         y no mas de MAX_DIAS_SIN_VOLUMEN ruedas sin operaciones. Antes era
+         solo una alerta y B-Gaming (GAMI) llego al puesto 2 del ranking con
+         el precio clavado y volumen cero durante dias, hasta un unico print
+         de +2164% el 15/10/2026.
 
   2. RANKING por calidad + valor, usando percentil (0-1, robusto a
      escalas distintas) de tres señales, promediadas:
@@ -63,6 +68,8 @@ TAMANIO_CARTERA_DEFAULT = 9
 MAX_POR_SECTOR = 2
 MAX_POR_REGION = 2
 UMBRAL_GANANCIA_COLAPSADA = -20  # mismo que gold/lynch.py usa para "Recuperable"
+UMBRAL_VOLUMEN_BAJO = 50_000  # acciones/dia promedio ultimos 30 dias -- por debajo, dificil de operar en una cartera concentrada
+MAX_DIAS_SIN_VOLUMEN = 5  # ruedas sin operaciones en los ultimos 30 dias: mas que esto es una cotizacion muerta
 
 # Casos donde pais_origen de Yahoo es el domicilio legal/fiscal, no el pais
 # real del negocio -- agregar acá si aparece un caso nuevo (mismo criterio
@@ -90,7 +97,7 @@ def obtener_candidatos(con) -> pd.DataFrame:
         t.tech_rsi14, t.tech_rsi_senal, t.tech_tendencia,
         ca.precio_objetivo_mediana, ca.rec_strong_buy, ca.rec_buy, ca.rec_hold, ca.rec_sell, ca.rec_strong_sell,
         sent.sent_score_promedio, sent.sent_clasificacion,
-        p.dias_precio, p.vol_prom_30d
+        p.dias_precio, p.vol_prom_30d, p.dias_sin_volumen_30d
     FROM gold_lynch l
     JOIN gold_comparables c USING (ticker_usd)
     JOIN gold_salud_financiera s USING (ticker_usd)
@@ -108,7 +115,8 @@ def obtener_candidatos(con) -> pd.DataFrame:
         -- operar en una cartera concentrada si nadie la opera.
         SELECT ticker_usd,
                COUNT(*) AS dias_precio,
-               AVG(volume) FILTER (WHERE fecha >= CURRENT_DATE - 30) AS vol_prom_30d
+               AVG(volume) FILTER (WHERE fecha >= CURRENT_DATE - 30) AS vol_prom_30d,
+               COUNT(*) FILTER (WHERE fecha >= CURRENT_DATE - 30 AND COALESCE(volume, 0) = 0) AS dias_sin_volumen_30d
         FROM fact_precios_daily
         WHERE adj_close IS NOT NULL
         GROUP BY ticker_usd
@@ -123,6 +131,8 @@ def aplicar_filtro_calidad(df: pd.DataFrame) -> pd.DataFrame:
         (df["salud_clasificacion"] != "Riesgo")
         & (df["crecimiento_ganancia_anual_pct"] > UMBRAL_GANANCIA_COLAPSADA)
         & (df["margen_neto_pct"] > 0)
+        & (df["vol_prom_30d"] >= UMBRAL_VOLUMEN_BAJO)
+        & (df["dias_sin_volumen_30d"] <= MAX_DIAS_SIN_VOLUMEN)
     ].copy()
 
 
@@ -137,7 +147,6 @@ def calcular_ranking(df: pd.DataFrame) -> pd.DataFrame:
 
 
 UMBRAL_DIAS_PRECIO = 1000  # ~4 años -- menos que esto no alcanza para vol/correlacion/drawdown a 5y confiables
-UMBRAL_VOLUMEN_BAJO = 50_000  # acciones/dia promedio ultimos 30 dias -- por debajo, dificil de operar en una cartera concentrada
 
 
 def marcar_alertas_externas(df: pd.DataFrame) -> pd.DataFrame:
@@ -147,7 +156,6 @@ def marcar_alertas_externas(df: pd.DataFrame) -> pd.DataFrame:
     df["alerta_analistas"] = ventas > compras
     df["alerta_sentimiento"] = df["sent_clasificacion"] == "Negativo"
     df["alerta_historia_corta"] = df["dias_precio"] < UMBRAL_DIAS_PRECIO
-    df["alerta_liquidez_baja"] = df["vol_prom_30d"] < UMBRAL_VOLUMEN_BAJO
     return df
 
 
@@ -199,7 +207,7 @@ def main() -> None:
 
     alertas = elegidos[
         elegidos["alerta_analistas"] | elegidos["alerta_sentimiento"]
-        | elegidos["alerta_historia_corta"] | elegidos["alerta_liquidez_baja"]
+        | elegidos["alerta_historia_corta"]
     ]
     if not alertas.empty:
         print("\nRevisar a mano (pasaron el ranking pero tienen alerta externa):")
@@ -211,8 +219,6 @@ def main() -> None:
                 motivos.append(f"sentimiento negativo (score {f['sent_score_promedio']:.2f})")
             if f["alerta_historia_corta"]:
                 motivos.append(f"solo {int(f['dias_precio'])} días de historial de precio (< {UMBRAL_DIAS_PRECIO})")
-            if f["alerta_liquidez_baja"]:
-                motivos.append(f"volumen promedio bajo ({f['vol_prom_30d']:.0f} acciones/día)")
             print(f"  {f['ticker_usd']}: {', '.join(motivos)}")
 
     print(f"\nTickers: {', '.join(elegidos['ticker_usd'].tolist())}")
