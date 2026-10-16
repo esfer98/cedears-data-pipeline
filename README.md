@@ -57,6 +57,7 @@ flowchart LR
         fma[("fact_macro_daily")]
         fca[("fact_consenso_analistas")]
         fn[("fact_noticias")]
+        cal["silver/calidad_datos.py<br/>tabla silver_calidad_datos (errores y advertencias por empresa)"]
     end
 
     subgraph Gold["Gold — una metodologia por archivo, columnas prefijadas"]
@@ -85,6 +86,8 @@ flowchart LR
     noticias --> db
     dolar --> db
     db --> dim & fm & fp & fi & fe & fma & fca & fn
+    dim & fm & fp --> cal
+    cal --> lynch
     dim & fm & fp & fi & fe --> lynch & comp & quant
     dim & fp & fma --> macrosens
     fp --> tech
@@ -187,6 +190,7 @@ python analisis_fundamental_liviano.py   # .info: P/E, P/B, market cap... (Yahoo
 python macro_diario.py                   # tasas, VIX, FX, commodities, indices (Yahoo, 16 series)
 python dolar_argentina.py                # oficial/blue/MEP/CCL/mayorista/cripto/tarjeta (dolarapi.com, 7 cotizaciones)
 python sentimiento_noticias.py           # titulares (Google News RSS) + sentimiento FinBERT -> fact_noticias
+python silver/calidad_datos.py           # controles de calidad -> silver_calidad_datos (marca, no borra; va antes de gold/)
 python gold/lynch.py                     # recalcula la vista gold_lynch (no pide datos nuevos)
 python gold/comparables.py               # recalcula la vista gold_comparables (idem)
 python gold/macro_sensitivity.py         # recalcula la vista gold_macro_sensitivity (idem, va despues de lynch.py -- su reporte hace JOIN contra gold_lynch)
@@ -252,6 +256,7 @@ cambia cada fuente:
 | Diaria (~20:00 ART) | `macro_diario.py` | Tasas/VIX/FX/commodities cambian todos los días hábiles, igual que el precio |
 | Diaria (~20:00 ART) | `dolar_argentina.py` | El dólar (oficial/blue/MEP/CCL) cambia todos los días; la API no tiene histórico, así que hay que pedirlo todos los días para acumularlo |
 | Diaria (~20:00 ART) | `sentimiento_noticias.py` | Hay noticias nuevas todos los días; el cache por titular evita reprocesar con FinBERT lo que ya se vio |
+| Diaria (~20:00 ART) | `silver/calidad_datos.py` | Controla lo que acaba de entrar (cotizaciones muertas, precios viejos, márgenes incoherentes, monedas mezcladas) antes de que gold/ lo use |
 | Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py`, `gold/technical.py`, `gold/ondas.py`, `gold/salud_financiera.py`, `gold/sentimiento.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
 | Semanal (domingos ~20:00 ART) | `listado_cedears.py` | El universo de CEDEARs rara vez cambia |
 | Semanal (domingos ~20:00 ART) | `analisis_fundamental_pesado.py` | Los balances solo cambian ~4 veces al año |
@@ -305,6 +310,8 @@ cedears-data-pipeline/
 ├── run_diario.ps1          # wrapper para Task Scheduler: precios + liviano + macro + dolar + noticias + gold (diario)
 ├── run_semanal.ps1         # wrapper para Task Scheduler: listado_cedears + pesado + consenso (semanal)
 ├── estado_pipeline.py      # tablero de salud: ultima corrida (ok/error) de cada script
+├── silver/
+│   └── calidad_datos.py    # controles de calidad -> tabla silver_calidad_datos (error = no puntua en la cartera; advertencia = revisar a mano)
 ├── gold/                   # una metodologia de analisis = un archivo, columnas prefijadas
 │   ├── lynch.py            # vista gold_lynch (categoria + PEG + checklist estilo Peter Lynch)
 │   ├── comparables.py      # vista gold_comparables (empresa vs. mediana de su sector + pares similares)
@@ -369,6 +376,7 @@ registrado como "Python 3 (.venv)" — si VS Code no lo detecta solo, `Ctrl+Shif
    python dolar_argentina.py
    python consenso_analistas.py
    python sentimiento_noticias.py
+   python silver/calidad_datos.py
    python gold/lynch.py
    python gold/comparables.py
    python gold/macro_sensitivity.py

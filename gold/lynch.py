@@ -30,7 +30,10 @@ Que calcula:
   4. lynch_checklist_score: cuantos de los 13 rasgos de la "empresa
      perfecta" se pueden verificar con los datos que tenemos, y cuantos
      cumple cada empresa. De los 13 del libro, HOY se pueden medir 6:
-       - baja cobertura institucional  (institutional_holding_pct < 30%)
+       - baja cobertura institucional  (institutional_holding_pct < 30%) --
+         se anula (NULL) si silver_calidad_datos marca la tenencia como no
+         confiable: en un listado de menos de un año la tenencia baja es un
+         artefacto, no una empresa ignorada (SK Hynix, ADR desde julio 2026)
        - deuda baja                    (deuda_patrimonio < 50%)
        - activo oculto                 (0 < price_to_book < 1 -- negativo NO
                                         cuenta, es patrimonio neto negativo)
@@ -125,9 +128,15 @@ primero AS (
     FROM fact_metrics_daily
     QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker_usd ORDER BY fecha ASC) = 1
 ),
+tenencia_no_confiable AS (
+    SELECT DISTINCT ticker_usd FROM silver_calidad_datos
+    WHERE regla = 'tenencia_institucional_no_confiable'
+),
 base AS (
     SELECT
-        u.*,
+        u.* REPLACE (
+            CASE WHEN tnc.ticker_usd IS NULL THEN u.institutional_holding_pct END AS institutional_holding_pct
+        ),
         d.nombre_empresa,
         -- COALESCE con sector_corregido: Yahoo clasifica mal algunos casos
         -- (ej. procesadoras de pago como "Technology"), ver correcciones_sector.py.
@@ -138,6 +147,7 @@ base AS (
     FROM ultimo u
     JOIN dim_empresa d USING (ticker_usd)
     LEFT JOIN primero p USING (ticker_usd)
+    LEFT JOIN tenencia_no_confiable tnc USING (ticker_usd)
 )
 SELECT
     ticker_usd, nombre_empresa, sector, industria, pais_origen, mercado, fecha,

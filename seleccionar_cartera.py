@@ -8,8 +8,12 @@ TODAS las metodologías gold que ya tenemos -- no es un script de pipeline
 
 Proceso (4 pasos, mismo orden que se charló antes de armar esto):
 
-  1. FILTRO DE CALIDAD -- saca lo que no sirve, sin importar cuán "barato"
-     parezca:
+  1. FILTROS OBLIGATORIOS -- sacan lo que no sirve, sin importar cuán
+     "barato" parezca. Son filtros y no alertas a proposito: la liquidez y
+     la historia corta empezaron como alertas y aun asi SK Hynix (69 dias de
+     historia) quedo primera y B-Gaming (cotizacion muerta) segunda.
+       - sin errores en silver_calidad_datos (silver/calidad_datos.py): el
+         dato tiene que ser correcto antes de puntuarlo
        - gold_salud_financiera.salud_clasificacion != 'Riesgo'
        - crecimiento_ganancia_anual_pct > -20% (mismo umbral que usa
          gold_lynch para la categoría "Recuperable" -- evita las trampas
@@ -17,15 +21,20 @@ Proceso (4 pasos, mismo orden que se charló antes de armar esto):
          negocio se cayó)
        - margen_neto_pct > 0 (gana plata)
        - se puede operar: volumen promedio de 30 dias >= UMBRAL_VOLUMEN_BAJO
-         y no mas de MAX_DIAS_SIN_VOLUMEN ruedas sin operaciones. Antes era
-         solo una alerta y B-Gaming (GAMI) llego al puesto 2 del ranking con
-         el precio clavado y volumen cero durante dias, hasta un unico print
-         de +2164% el 15/10/2026.
+       - al menos UMBRAL_HISTORIA_MINIMA ruedas de precio (un año): con
+         menos no hay forma de medir su riesgo
 
   2. RANKING por calidad + valor, usando percentil (0-1, robusto a
      escalas distintas) de tres señales, promediadas:
        - lynch_checklist_score (mas alto, mejor)
-       - -comp_pe_vs_sector_pct (mas barata vs. su sector real, mejor)
+       - -comp_pe_vs_sector_pct (mas barata vs. su sector real, mejor).
+         NO suma (queda neutral, 0.5) cuando el P/E no es confiable:
+           * categoria Lynch "Ciclica": en las ciclicas el P/E mas bajo
+             suele aparecer en el pico de ganancias, justo antes de que
+             caigan (SK Hynix, memorias, octubre 2026)
+           * advertencia margen_incoherente en silver: la ganancia esta
+             inflada por algo no recurrente y el P/E parece mas bajo de lo
+             que es
        - salud_score / salud_evaluables (ratio, no castiga a bancos que
          no tienen los 5 criterios evaluables)
 
@@ -33,6 +42,9 @@ Proceso (4 pasos, mismo orden que se charló antes de armar esto):
      mirar a mano:
        - consenso de analistas con upside negativo o mayoría "sell"
        - sentimiento de noticias "Negativo"
+       - historia de menos de UMBRAL_DIAS_PRECIO ruedas (no alcanza para el
+         analisis de riesgo a 5 años de portfolio_analytics.ipynb)
+       - advertencias de datos de silver_calidad_datos
 
   4. DIVERSIFICACIÓN SECTORIAL *Y* REGIONAL -- recorre el ranking de
      arriba hacia abajo, tope de `MAX_POR_SECTOR` por sector Y
@@ -69,7 +81,8 @@ MAX_POR_SECTOR = 2
 MAX_POR_REGION = 2
 UMBRAL_GANANCIA_COLAPSADA = -20  # mismo que gold/lynch.py usa para "Recuperable"
 UMBRAL_VOLUMEN_BAJO = 50_000  # acciones/dia promedio ultimos 30 dias -- por debajo, dificil de operar en una cartera concentrada
-MAX_DIAS_SIN_VOLUMEN = 5  # ruedas sin operaciones en los ultimos 30 dias: mas que esto es una cotizacion muerta
+UMBRAL_HISTORIA_MINIMA = 252  # ruedas de precio (un año) para poder entrar a la cartera
+UMBRAL_DIAS_PRECIO = 1000  # ~4 años -- menos que esto no alcanza para vol/correlacion/drawdown a 5y confiables (alerta, no filtro)
 
 # Casos donde pais_origen de Yahoo es el domicilio legal/fiscal, no el pais
 # real del negocio -- agregar acá si aparece un caso nuevo (mismo criterio
@@ -97,7 +110,9 @@ def obtener_candidatos(con) -> pd.DataFrame:
         t.tech_rsi14, t.tech_rsi_senal, t.tech_tendencia,
         ca.precio_objetivo_mediana, ca.rec_strong_buy, ca.rec_buy, ca.rec_hold, ca.rec_sell, ca.rec_strong_sell,
         sent.sent_score_promedio, sent.sent_clasificacion,
-        p.dias_precio, p.vol_prom_30d, p.dias_sin_volumen_30d
+        p.dias_precio, p.vol_prom_30d,
+        q.errores_datos, q.advertencias_datos,
+        COALESCE(q.ganancia_no_recurrente, FALSE) AS ganancia_no_recurrente
     FROM gold_lynch l
     JOIN gold_comparables c USING (ticker_usd)
     JOIN gold_salud_financiera s USING (ticker_usd)
@@ -115,12 +130,19 @@ def obtener_candidatos(con) -> pd.DataFrame:
         -- operar en una cartera concentrada si nadie la opera.
         SELECT ticker_usd,
                COUNT(*) AS dias_precio,
-               AVG(volume) FILTER (WHERE fecha >= CURRENT_DATE - 30) AS vol_prom_30d,
-               COUNT(*) FILTER (WHERE fecha >= CURRENT_DATE - 30 AND COALESCE(volume, 0) = 0) AS dias_sin_volumen_30d
+               AVG(volume) FILTER (WHERE fecha >= CURRENT_DATE - 30) AS vol_prom_30d
         FROM fact_precios_daily
         WHERE adj_close IS NOT NULL
         GROUP BY ticker_usd
     ) p USING (ticker_usd)
+    LEFT JOIN (
+        SELECT ticker_usd,
+               STRING_AGG(regla, ', ') FILTER (WHERE severidad = 'error') AS errores_datos,
+               STRING_AGG(regla || ' (' || detalle || ')', '; ') FILTER (WHERE severidad = 'advertencia') AS advertencias_datos,
+               BOOL_OR(regla = 'margen_incoherente') AS ganancia_no_recurrente
+        FROM silver_calidad_datos
+        GROUP BY ticker_usd
+    ) q USING (ticker_usd)
     WHERE l.mercado != 'cripto'
     """
     return con.execute(q).fetchdf()
@@ -132,7 +154,8 @@ def aplicar_filtro_calidad(df: pd.DataFrame) -> pd.DataFrame:
         & (df["crecimiento_ganancia_anual_pct"] > UMBRAL_GANANCIA_COLAPSADA)
         & (df["margen_neto_pct"] > 0)
         & (df["vol_prom_30d"] >= UMBRAL_VOLUMEN_BAJO)
-        & (df["dias_sin_volumen_30d"] <= MAX_DIAS_SIN_VOLUMEN)
+        & (df["dias_precio"] >= UMBRAL_HISTORIA_MINIMA)
+        & df["errores_datos"].isna()
     ].copy()
 
 
@@ -140,13 +163,12 @@ def calcular_ranking(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["pct_checklist"] = df["lynch_checklist_score"].rank(pct=True)
     df["pct_barata"] = (-df["comp_pe_vs_sector_pct"]).rank(pct=True)
+    df["pe_no_confiable"] = (df["lynch_categoria_auto"] == "Ciclica") | df["ganancia_no_recurrente"]
+    df.loc[df["pe_no_confiable"], "pct_barata"] = 0.5
     df["salud_ratio"] = df["salud_score"] / df["salud_evaluables"].replace(0, pd.NA)
     df["pct_salud"] = df["salud_ratio"].rank(pct=True)
     df["score_compuesto"] = df[["pct_checklist", "pct_barata", "pct_salud"]].mean(axis=1)
     return df.sort_values("score_compuesto", ascending=False)
-
-
-UMBRAL_DIAS_PRECIO = 1000  # ~4 años -- menos que esto no alcanza para vol/correlacion/drawdown a 5y confiables
 
 
 def marcar_alertas_externas(df: pd.DataFrame) -> pd.DataFrame:
@@ -156,6 +178,7 @@ def marcar_alertas_externas(df: pd.DataFrame) -> pd.DataFrame:
     df["alerta_analistas"] = ventas > compras
     df["alerta_sentimiento"] = df["sent_clasificacion"] == "Negativo"
     df["alerta_historia_corta"] = df["dias_precio"] < UMBRAL_DIAS_PRECIO
+    df["alerta_datos"] = df["advertencias_datos"].notna()
     return df
 
 
@@ -207,7 +230,7 @@ def main() -> None:
 
     alertas = elegidos[
         elegidos["alerta_analistas"] | elegidos["alerta_sentimiento"]
-        | elegidos["alerta_historia_corta"]
+        | elegidos["alerta_historia_corta"] | elegidos["alerta_datos"]
     ]
     if not alertas.empty:
         print("\nRevisar a mano (pasaron el ranking pero tienen alerta externa):")
@@ -219,6 +242,8 @@ def main() -> None:
                 motivos.append(f"sentimiento negativo (score {f['sent_score_promedio']:.2f})")
             if f["alerta_historia_corta"]:
                 motivos.append(f"solo {int(f['dias_precio'])} días de historial de precio (< {UMBRAL_DIAS_PRECIO})")
+            if f["alerta_datos"]:
+                motivos.append(f"datos: {f['advertencias_datos']}")
             print(f"  {f['ticker_usd']}: {', '.join(motivos)}")
 
     print(f"\nTickers: {', '.join(elegidos['ticker_usd'].tolist())}")
