@@ -93,5 +93,24 @@ Run-Paso "gold_comparables" "gold\comparables.py"
 Run-Paso "gold_macro_sensitivity" "gold\macro_sensitivity.py"
 Run-Paso "gold_technical" "gold\technical.py"
 Run-Paso "gold_ondas" "gold\ondas.py"
+Run-Paso "gold_refugio" "gold\refugio.py"
 Run-Paso "gold_salud_financiera" "gold\salud_financiera.py"
 Run-Paso "gold_sentimiento" "gold\sentimiento.py"
+Run-Paso "monitoreo_cartera" "monitoreo_cartera.py"
+
+# Aviso visible si el monitoreo encontro algo: un reporte que nadie abre es lo
+# mismo que no tenerlo (asi nos enteramos tarde de la caida de SK Hynix).
+$alertas = Join-Path $PSScriptRoot "reportes\alertas_hoy.txt"
+if (Test-Path $alertas) {
+    try {
+        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+        $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+        $textos = $xml.GetElementsByTagName("text")
+        $textos.Item(0).AppendChild($xml.CreateTextNode("CEDEARs: revisar cartera")) | Out-Null
+        $textos.Item(1).AppendChild($xml.CreateTextNode((Get-Content $alertas -Raw -Encoding UTF8))) | Out-Null
+        $appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show([Windows.UI.Notifications.ToastNotification]::new($xml))
+    } catch {
+        "=== no se pudo mostrar la notificacion: $_ ===" | Out-File -FilePath $logFile -Append -Encoding utf8
+    }
+}

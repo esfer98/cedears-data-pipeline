@@ -66,6 +66,7 @@ flowchart LR
         macrosens["gold/macro_sensitivity.py<br/>vista gold_macro_sensitivity (columnas macro_*)"]
         tech["gold/technical.py<br/>vista gold_technical (columnas tech_*)"]
         ondas["gold/ondas.py<br/>tablas gold_pivots + gold_ondas (columnas onda_*)"]
+        refugio["gold/refugio.py<br/>tablas gold_refugio + gold_refugio_episodios (columnas refugio_*)"]
         salud["gold/salud_financiera.py<br/>vista gold_salud_financiera (columnas salud_*)"]
         sent["gold/sentimiento.py<br/>vista gold_sentimiento (columnas sent_*)"]
         quant["gold/quant.py (futuro)"]
@@ -92,6 +93,7 @@ flowchart LR
     dim & fp & fma --> macrosens
     fp --> tech
     fp --> ondas
+    fp & fma --> refugio
     fm & fi --> salud
     fn --> sent
     dim & fm & fp & fi & fe & fma & fca & fn --> nb
@@ -100,6 +102,7 @@ flowchart LR
     macrosens --> nb
     tech --> nb
     ondas --> nb
+    refugio --> nb
     salud --> nb
     sent --> nb
 ```
@@ -170,6 +173,11 @@ modelo dimensional:
   roto, devuelve vacío hasta para AAPL, verificado en vivo). El PK es el
   titular mismo: un titular repetido/resindicado no se reprocesa con
   FinBERT (lo caro de esta tabla es la inferencia, no el fetch).
+- **`fact_cartera_seleccionada`** — cada cartera guardada por
+  `seleccionar_cartera.py --guardar=manual|semanal`, una fila por empresa
+  (PK `fecha_seleccion` + `origen` + `ticker_usd`) con el cierre del día como
+  precio de selección. Es la memoria que usan `monitoreo_cartera.py` y
+  `evaluar_carteras.py`. Ver [REGLAS.md](REGLAS.md).
 - **`log_ejecuciones`** — append-only, una fila por corrida de cada script
   (`ok`/`error`, cuántas filas afectó, y el detalle si falló). Sirve para
   tres cosas: idempotencia (no repetir un job que ya corrió hoy si el
@@ -198,11 +206,15 @@ python gold/technical.py                 # recalcula la vista gold_technical (id
 python gold/ondas.py                     # recalcula las TABLAS gold_pivots/gold_ondas (ZigZag + Fibonacci + Elliott candidato; en Python, no es vista)
 python gold/salud_financiera.py          # recalcula la vista gold_salud_financiera (idem, lee fact_metrics_daily + fact_balance_cashflow_annual)
 python gold/sentimiento.py               # recalcula la vista gold_sentimiento (idem, agrega fact_noticias de los ultimos 7 dias)
+python gold/refugio.py                   # recalcula las TABLAS gold_refugio/gold_refugio_episodios (como se comporto cada accion en las caidas del S&P)
+python monitoreo_cartera.py              # reporte de la ultima cartera guardada -> reportes/ (+ notificacion de Windows si hay alertas, desde run_diario.ps1)
 
 # Semanal (domingos)
 python listado_cedears.py                # universo IOL -> dim_empresa + cedears_normalizados.csv
 python analisis_fundamental_pesado.py    # income statement, balance, cashflow, earnings (Yahoo, 4 calls/ticker)
 python consenso_analistas.py             # precio objetivo + recomendaciones (Yahoo, 2 calls/ticker)
+python seleccionar_cartera.py --guardar=semanal  # guarda la cartera de la semana en fact_cartera_seleccionada
+python evaluar_carteras.py               # cada cartera guardada vs. mediana del universo y S&P -> reportes/evaluacion_carteras.md
 ```
 
 `listado_cedears.py` tiene que correr antes que cualquier otro Yahoo: los
@@ -257,10 +269,12 @@ cambia cada fuente:
 | Diaria (~20:00 ART) | `dolar_argentina.py` | El dólar (oficial/blue/MEP/CCL) cambia todos los días; la API no tiene histórico, así que hay que pedirlo todos los días para acumularlo |
 | Diaria (~20:00 ART) | `sentimiento_noticias.py` | Hay noticias nuevas todos los días; el cache por titular evita reprocesar con FinBERT lo que ya se vio |
 | Diaria (~20:00 ART) | `silver/calidad_datos.py` | Controla lo que acaba de entrar (cotizaciones muertas, precios viejos, márgenes incoherentes, monedas mezcladas) antes de que gold/ lo use |
-| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py`, `gold/technical.py`, `gold/ondas.py`, `gold/salud_financiera.py`, `gold/sentimiento.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
+| Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py`, `gold/technical.py`, `gold/ondas.py`, `gold/refugio.py`, `gold/salud_financiera.py`, `gold/sentimiento.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
 | Semanal (domingos ~20:00 ART) | `listado_cedears.py` | El universo de CEDEARs rara vez cambia |
 | Semanal (domingos ~20:00 ART) | `analisis_fundamental_pesado.py` | Los balances solo cambian ~4 veces al año |
 | Semanal (domingos ~20:00 ART) | `consenso_analistas.py` | Los precios objetivo/recomendaciones no se actualizan todos los días |
+| Diaria (~20:00 ART, último paso) | `monitoreo_cartera.py` | Vigilar la cartera elegida todos los días; avisa con una notificación si hay alertas |
+| Semanal (domingos) | `seleccionar_cartera.py --guardar=semanal`, `evaluar_carteras.py` | Una cartera guardada por semana es la serie que permite saber si el ranking funciona |
 | Mensual | Nada automatizado todavía | Reservado para revisión manual de `lynch_category`/`modelo_negocio` |
 
 20:00 ART queda después del cierre de BYMA (17:00) y de NYSE/NASDAQ (17:00–18:00
@@ -307,6 +321,10 @@ cedears-data-pipeline/
 ├── consenso_analistas.py   # precio objetivo + recomendaciones de Yahoo (semanal) -> fact_consenso_analistas
 ├── sentimiento_noticias.py # titulares (Google News RSS) + sentimiento FinBERT -> fact_noticias
 ├── correcciones_sector.py  # override manual de sector cuando Yahoo clasifica mal -> dim_empresa.sector_corregido
+├── seleccionar_cartera.py  # cartera de 7-9: filtros obligatorios + ranking + diversificacion (--guardar=manual|semanal la registra)
+├── monitoreo_cartera.py    # reporte diario de la ultima cartera guardada -> reportes/ (alertas, no vende)
+├── evaluar_carteras.py     # cada cartera guardada vs. universo y S&P (el ranking se prueba hacia adelante)
+├── REGLAS.md               # todas las reglas de la cartera y el motivo de cada una
 ├── run_diario.ps1          # wrapper para Task Scheduler: precios + liviano + macro + dolar + noticias + gold (diario)
 ├── run_semanal.ps1         # wrapper para Task Scheduler: listado_cedears + pesado + consenso (semanal)
 ├── estado_pipeline.py      # tablero de salud: ultima corrida (ok/error) de cada script
@@ -319,7 +337,8 @@ cedears-data-pipeline/
 │   ├── technical.py        # vista gold_technical (SMA50/200, RSI-14, momentum 1/3/6m, tendencia de volumen, Bollinger, MACD, ATR, distancia a max/min 52 semanas)
 │   ├── ondas.py            # tablas gold_pivots + gold_ondas (swings ZigZag, niveles de Fibonacci, conteo candidato de Elliott) -- unica capa gold materializada, no es vista
 │   ├── salud_financiera.py # vista gold_salud_financiera (score de liquidez/apalancamiento/rentabilidad/cobertura)
-│   └── sentimiento.py      # vista gold_sentimiento (agrega fact_noticias a score por empresa, ventana 7 dias)
+│   ├── sentimiento.py      # vista gold_sentimiento (agrega fact_noticias a score por empresa, ventana 7 dias)
+│   └── refugio.py          # tablas gold_refugio + gold_refugio_episodios (Refugio / Defensiva / No es refugio segun las caidas reales del S&P)
 ├── notebooks/
 │   ├── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción + volumen histórico, sensibilidad a tasa, técnico, salud financiera, consenso, sentimiento, ondas/Fibonacci/Elliott con backtest de la señal)
 │   ├── eda_brasil.ipynb    # BDR + ADR directo de Brasil: retorno limpio vs. cambiario (USDBRL), correlación vs. USDBRL/Bovespa, bancos Brasil vs. Argentina, qué mirar hoy y antecedente electoral 2022
@@ -384,6 +403,7 @@ registrado como "Python 3 (.venv)" — si VS Code no lo detecta solo, `Ctrl+Shif
    python gold/ondas.py
    python gold/salud_financiera.py
    python gold/sentimiento.py
+   python gold/refugio.py
    ```
 
 ## Notas

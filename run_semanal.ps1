@@ -40,12 +40,12 @@ $logFile = Join-Path $logDir ("semanal_{0}.log" -f (Get-Date -Format "yyyy-MM-dd
 # a los reintentos. Con consola propia solo muere el paso y se reintenta.
 # Probado con un crash real (access violation) y un evento de consola.
 function Run-Paso {
-    param([string]$Nombre, [string]$Script, [int]$MaxIntentos = 3)
+    param([string]$Nombre, [string]$Script, [string]$Argumentos = "", [int]$MaxIntentos = 3)
     $salida = Join-Path $logDir "_tmp_$Nombre.out"
     $errores = Join-Path $logDir "_tmp_$Nombre.err"
     for ($intento = 1; $intento -le $MaxIntentos; $intento++) {
         "=== $Nombre intento $intento/$MaxIntentos ($(Get-Date -Format s)) ===" | Out-File -FilePath $logFile -Append -Encoding utf8
-        $proc = Start-Process -FilePath $python -ArgumentList "`"$Script`"" -WorkingDirectory $PSScriptRoot `
+        $proc = Start-Process -FilePath $python -ArgumentList "`"$Script`" $Argumentos" -WorkingDirectory $PSScriptRoot `
             -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $salida -RedirectStandardError $errores
         foreach ($f in @($salida, $errores)) {
             if (Test-Path $f) {
@@ -67,3 +67,7 @@ function Run-Paso {
 Run-Paso "listado_cedears" "listado_cedears.py"
 Run-Paso "analisis_fundamental_pesado" "analisis_fundamental_pesado.py"
 Run-Paso "consenso_analistas" "consenso_analistas.py"
+# Una cartera por semana guardada automaticamente: es la serie que permite
+# evaluar si el ranking funciona (evaluar_carteras.py), aunque no se use.
+Run-Paso "cartera_semanal" "seleccionar_cartera.py" "--guardar=semanal"
+Run-Paso "evaluar_carteras" "evaluar_carteras.py"

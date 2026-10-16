@@ -67,7 +67,9 @@ Proceso (4 pasos, mismo orden que se charló antes de armar esto):
      tipo de cambio/macro, no tiene sentido separarlas por sector GICS
      para este propósito).
 
-Correr: python seleccionar_cartera.py [tamanio]   (default 9)
+Correr: python seleccionar_cartera.py [tamanio] [--guardar=manual|semanal]   (default 9)
+  --guardar deja la cartera en fact_cartera_seleccionada, con el precio de
+  cierre del dia, para monitoreo_cartera.py y evaluar_carteras.py.
 """
 
 import sys
@@ -204,8 +206,44 @@ def elegir_diversificado(df: pd.DataFrame, tamanio: int, max_por_sector: int, ma
     return resultado
 
 
+def motivos_alerta(f) -> list[str]:
+    motivos = []
+    if f["alerta_analistas"]:
+        motivos.append("mayoría de analistas en sell/strong sell")
+    if f["alerta_sentimiento"]:
+        motivos.append(f"sentimiento negativo (score {f['sent_score_promedio']:.2f})")
+    if f["alerta_historia_corta"]:
+        motivos.append(f"solo {int(f['dias_precio'])} días de historial de precio (< {UMBRAL_DIAS_PRECIO})")
+    if f["alerta_datos"]:
+        motivos.append(f"datos: {f['advertencias_datos']}")
+    return motivos
+
+
+def guardar(elegidos: pd.DataFrame, origen: str) -> None:
+    con = db.conectar()
+    precios = con.execute("""
+        SELECT ticker_usd, fecha, adj_close FROM fact_precios_daily
+        WHERE ticker_usd = ANY(?) AND adj_close IS NOT NULL
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker_usd ORDER BY fecha DESC) = 1
+    """, [elegidos["ticker_usd"].tolist()]).fetchdf().set_index("ticker_usd")
+    # La fecha de seleccion es la del ultimo cierre usado, no la del dia en que se corre:
+    # el resultado se mide desde ese precio.
+    fecha_seleccion = precios["fecha"].max().date()
+    precios = precios["adj_close"]
+    filas = [{
+        "fecha_seleccion": fecha_seleccion, "origen": origen, "ticker_usd": f["ticker_usd"], "puesto": i,
+        "score_compuesto": float(f["score_compuesto"]), "precio_seleccion": float(precios[f["ticker_usd"]]),
+        "sector": f["sector"], "region": f["region"], "alertas": "; ".join(motivos_alerta(f)) or None,
+    } for i, (_, f) in enumerate(elegidos.iterrows(), start=1)]
+    db.guardar_cartera(con, filas)
+    con.close()
+    print(f"\nGuardada en fact_cartera_seleccionada (cierre del {fecha_seleccion}, origen '{origen}')")
+
+
 def main() -> None:
-    tamanio = int(sys.argv[1]) if len(sys.argv) > 1 else TAMANIO_CARTERA_DEFAULT
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    origen = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--guardar=")), None)
+    tamanio = int(args[0]) if args else TAMANIO_CARTERA_DEFAULT
 
     con = db.conectar()
     candidatos = obtener_candidatos(con)
@@ -235,18 +273,12 @@ def main() -> None:
     if not alertas.empty:
         print("\nRevisar a mano (pasaron el ranking pero tienen alerta externa):")
         for _, f in alertas.iterrows():
-            motivos = []
-            if f["alerta_analistas"]:
-                motivos.append("mayoría de analistas en sell/strong sell")
-            if f["alerta_sentimiento"]:
-                motivos.append(f"sentimiento negativo (score {f['sent_score_promedio']:.2f})")
-            if f["alerta_historia_corta"]:
-                motivos.append(f"solo {int(f['dias_precio'])} días de historial de precio (< {UMBRAL_DIAS_PRECIO})")
-            if f["alerta_datos"]:
-                motivos.append(f"datos: {f['advertencias_datos']}")
+            motivos = motivos_alerta(f)
             print(f"  {f['ticker_usd']}: {', '.join(motivos)}")
 
     print(f"\nTickers: {', '.join(elegidos['ticker_usd'].tolist())}")
+    if origen:
+        guardar(elegidos, origen)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """
 db.py
 -----
-Warehouse local en DuckDB (un solo archivo, sin servidor) con 9 tablas:
+Warehouse local en DuckDB (un solo archivo, sin servidor) con 10 tablas:
 
   dim_empresa                  - descriptiva, cambia poco (PK: ticker_usd)
   fact_metrics_daily           - ratios de valuacion y momentum, una fila por dia (PK: ticker_usd + fecha)
@@ -16,6 +16,9 @@ Warehouse local en DuckDB (un solo archivo, sin servidor) con 9 tablas:
                                   dia (PK: ticker_usd + fecha) -- ver consenso_analistas.py
   fact_noticias                 - titulares + sentimiento FinBERT, una fila por titular unico
                                   (PK: ticker_usd + titular) -- ver sentimiento_noticias.py
+  fact_cartera_seleccionada    - cada cartera que eligio seleccionar_cartera.py --guardar, una fila
+                                  por empresa (PK: fecha_seleccion + origen + ticker_usd) -- es la
+                                  memoria que permite evaluar si el ranking funciona (evaluar_carteras.py)
 
 listado_cedears.py, analisis_fundamental_liviano.py/_pesado.py,
 precios_historicos.py y macro_diario.py escriben cada uno las columnas/tablas
@@ -178,6 +181,23 @@ CREATE TABLE IF NOT EXISTS fact_noticias (
     score_sentimiento   DOUBLE,   -- confianza del label elegido (0-1, softmax)
     fecha_procesado     DATE,
     PRIMARY KEY (ticker_usd, titular)
+);
+
+-- Registro de carteras elegidas. origen: 'semanal' (la guarda run_semanal.ps1
+-- todos los domingos, para tener una serie regular que evaluar) o 'manual'
+-- (la que se decide usar de verdad). precio_seleccion es el cierre del dia
+-- de la seleccion: contra eso se mide el resultado, sin look-ahead.
+CREATE TABLE IF NOT EXISTS fact_cartera_seleccionada (
+    fecha_seleccion  DATE,
+    origen           VARCHAR,
+    ticker_usd       VARCHAR,
+    puesto           INTEGER,
+    score_compuesto  DOUBLE,
+    precio_seleccion DOUBLE,
+    sector           VARCHAR,
+    region           VARCHAR,
+    alertas          VARCHAR,
+    PRIMARY KEY (fecha_seleccion, origen, ticker_usd)
 );
 
 -- Log append-only (sin PK a proposito): cada corrida de cada script deja una
@@ -468,6 +488,21 @@ def upsert_fact_macro_daily(con: duckdb.DuckDBPyConnection, macro: pd.DataFrame)
         ON CONFLICT (serie, fecha) DO UPDATE SET valor = excluded.valor
     """)
     con.unregister("macro_temp")
+
+
+def guardar_cartera(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> None:
+    """Reemplaza la cartera de esa fecha y origen (si se corre dos veces el
+    mismo dia queda la ultima, no una mezcla de las dos)."""
+    if not filas:
+        return
+    columnas = ["fecha_seleccion", "origen", "ticker_usd", "puesto", "score_compuesto",
+                "precio_seleccion", "sector", "region", "alertas"]
+    con.execute("DELETE FROM fact_cartera_seleccionada WHERE fecha_seleccion = ? AND origen = ?",
+                [filas[0]["fecha_seleccion"], filas[0]["origen"]])
+    con.executemany(
+        f"INSERT INTO fact_cartera_seleccionada ({', '.join(columnas)}) VALUES ({', '.join('?' for _ in columnas)})",
+        [tuple(f.get(c) for c in columnas) for f in filas],
+    )
 
 
 def upsert_fact_consenso_analistas(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> None:
