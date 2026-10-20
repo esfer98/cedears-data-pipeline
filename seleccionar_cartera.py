@@ -70,6 +70,11 @@ Proceso (4 pasos, mismo orden que se charló antes de armar esto):
 Correr: python seleccionar_cartera.py [tamanio] [--guardar=manual|semanal]   (default 9)
   --guardar deja la cartera en fact_cartera_seleccionada, con el precio de
   cierre del dia, para monitoreo_cartera.py y evaluar_carteras.py.
+  --guardar=semanal guarda una sola por semana (la primera, segun la fecha
+  del cierre usado): run_diario.ps1 lo llama todos los dias y las demas
+  corridas de la semana no hacen nada. Se corre desde el diario y no desde
+  el semanal para usar datos completos: el 18/10/2026 corrio a las 19:00,
+  entre pesado y liviano, y no encontro ninguna empresa.
 """
 
 import sys
@@ -230,6 +235,16 @@ def guardar(elegidos: pd.DataFrame, origen: str) -> None:
     # el resultado se mide desde ese precio.
     fecha_seleccion = precios["fecha"].max().date()
     precios = precios["adj_close"]
+    if origen == "semanal":
+        ya = con.execute(
+            "SELECT COUNT(*) FROM fact_cartera_seleccionada WHERE origen = 'semanal' "
+            "AND DATE_TRUNC('week', fecha_seleccion) = DATE_TRUNC('week', ?::DATE)",
+            [fecha_seleccion],
+        ).fetchone()[0]
+        if ya:
+            print(f"\nYa hay una cartera semanal guardada en la semana del {fecha_seleccion}, no se guarda otra.")
+            con.close()
+            return
     filas = [{
         "fecha_seleccion": fecha_seleccion, "origen": origen, "ticker_usd": f["ticker_usd"], "puesto": i,
         "score_compuesto": float(f["score_compuesto"]), "precio_seleccion": float(precios[f["ticker_usd"]]),
@@ -257,6 +272,11 @@ def main() -> None:
     rankeados = marcar_alertas_externas(rankeados)
 
     elegidos = elegir_diversificado(rankeados, tamanio, MAX_POR_SECTOR)
+    if elegidos.empty:
+        # Que no pase ninguna es casi seguro un problema de datos, no del mercado.
+        print("Ninguna empresa pasó los filtros: revisar los datos (silver_calidad_datos, "
+              "fact_metrics_daily del día) antes de confiar en esto.")
+        sys.exit(2)
 
     print(f"\n=== Cartera seleccionada ({len(elegidos)} empresas, max {MAX_POR_SECTOR} por sector, max {MAX_POR_REGION} por región) ===\n")
     cols = [

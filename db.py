@@ -183,8 +183,8 @@ CREATE TABLE IF NOT EXISTS fact_noticias (
     PRIMARY KEY (ticker_usd, titular)
 );
 
--- Registro de carteras elegidas. origen: 'semanal' (la guarda run_semanal.ps1
--- todos los domingos, para tener una serie regular que evaluar) o 'manual'
+-- Registro de carteras elegidas. origen: 'semanal' (la guarda run_diario.ps1
+-- una vez por semana, para tener una serie regular que evaluar) o 'manual'
 -- (la que se decide usar de verdad). precio_seleccion es el cierre del dia
 -- de la seleccion: contra eso se mide el resultado, sin look-ahead.
 CREATE TABLE IF NOT EXISTS fact_cartera_seleccionada (

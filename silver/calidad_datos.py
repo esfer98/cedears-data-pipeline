@@ -101,7 +101,17 @@ saltos AS (
     QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker_usd ORDER BY ABS(ret) DESC) = 1
 ),
 metricas AS (
-    SELECT * FROM fact_metrics_daily
+    -- Forward-fill: liviano y pesado escriben columnas distintas de la misma fila
+    -- (ver gold/salud_financiera.py); sin esto, un dia en que solo corrio pesado
+    -- las reglas de margen/moneda/tenencia no verian nada.
+    SELECT ticker_usd, fecha,
+           LAST_VALUE(margen_neto_pct IGNORE NULLS) OVER w AS margen_neto_pct,
+           LAST_VALUE(margen_operativo_pct IGNORE NULLS) OVER w AS margen_operativo_pct,
+           LAST_VALUE(enterprise_value IGNORE NULLS) OVER w AS enterprise_value,
+           LAST_VALUE(market_cap IGNORE NULLS) OVER w AS market_cap,
+           LAST_VALUE(institutional_holding_pct IGNORE NULLS) OVER w AS institutional_holding_pct
+    FROM fact_metrics_daily
+    WINDOW w AS (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
     QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker_usd ORDER BY fecha DESC) = 1
 ),
 reglas AS (

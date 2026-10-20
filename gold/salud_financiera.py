@@ -44,8 +44,18 @@ import db
 SQL_VISTA = """
 CREATE OR REPLACE VIEW gold_salud_financiera AS
 WITH ultimo_metrics AS (
-    SELECT *
+    -- Forward-fill igual que gold_lynch/gold_comparables: fact_metrics_daily la
+    -- escriben liviano (diario) y pesado (semanal) con columnas distintas. El
+    -- 18/10/2026 pesado corrio a las 19:00 y dejo la fila del dia sin margen ni
+    -- ratios hasta que corrio liviano a las 20:25: en esa hora esta vista dio
+    -- margen NULL para todas y seleccionar_cartera.py no encontro ninguna empresa.
+    SELECT ticker_usd, fecha,
+           LAST_VALUE(razon_corriente IGNORE NULLS) OVER w AS razon_corriente,
+           LAST_VALUE(deuda_patrimonio IGNORE NULLS) OVER w AS deuda_patrimonio,
+           LAST_VALUE(roe_pct IGNORE NULLS) OVER w AS roe_pct,
+           LAST_VALUE(margen_neto_pct IGNORE NULLS) OVER w AS margen_neto_pct
     FROM fact_metrics_daily
+    WINDOW w AS (PARTITION BY ticker_usd ORDER BY fecha ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
     QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker_usd ORDER BY fecha DESC) = 1
 ),
 ultimo_balance AS (

@@ -207,14 +207,14 @@ python gold/ondas.py                     # recalcula las TABLAS gold_pivots/gold
 python gold/salud_financiera.py          # recalcula la vista gold_salud_financiera (idem, lee fact_metrics_daily + fact_balance_cashflow_annual)
 python gold/sentimiento.py               # recalcula la vista gold_sentimiento (idem, agrega fact_noticias de los ultimos 7 dias)
 python gold/refugio.py                   # recalcula las TABLAS gold_refugio/gold_refugio_episodios (como se comporto cada accion en las caidas del S&P)
+python seleccionar_cartera.py --guardar=semanal  # guarda la cartera de la semana (solo la primera corrida de cada semana)
+python evaluar_carteras.py               # cada cartera guardada vs. mediana del universo y S&P -> reportes/evaluacion_carteras.md
 python monitoreo_cartera.py              # reporte de la ultima cartera guardada -> reportes/ (+ notificacion de Windows si hay alertas, desde run_diario.ps1)
 
 # Semanal (domingos)
 python listado_cedears.py                # universo IOL -> dim_empresa + cedears_normalizados.csv
 python analisis_fundamental_pesado.py    # income statement, balance, cashflow, earnings (Yahoo, 4 calls/ticker)
 python consenso_analistas.py             # precio objetivo + recomendaciones (Yahoo, 2 calls/ticker)
-python seleccionar_cartera.py --guardar=semanal  # guarda la cartera de la semana en fact_cartera_seleccionada
-python evaluar_carteras.py               # cada cartera guardada vs. mediana del universo y S&P -> reportes/evaluacion_carteras.md
 ```
 
 `listado_cedears.py` tiene que correr antes que cualquier otro Yahoo: los
@@ -274,7 +274,7 @@ cambia cada fuente:
 | Semanal (domingos ~20:00 ART) | `analisis_fundamental_pesado.py` | Los balances solo cambian ~4 veces al año |
 | Semanal (domingos ~20:00 ART) | `consenso_analistas.py` | Los precios objetivo/recomendaciones no se actualizan todos los días |
 | Diaria (~20:00 ART, último paso) | `monitoreo_cartera.py` | Vigilar la cartera elegida todos los días; avisa con una notificación si hay alertas |
-| Semanal (domingos) | `seleccionar_cartera.py --guardar=semanal`, `evaluar_carteras.py` | Una cartera guardada por semana es la serie que permite saber si el ranking funciona |
+| Diaria, guarda una vez por semana | `seleccionar_cartera.py --guardar=semanal`, `evaluar_carteras.py` | Una cartera guardada por semana es la serie que permite saber si el ranking funciona. Va en el diario, con datos completos: corriendo en el semanal (entre pesado y liviano) no pasaba ninguna empresa |
 | Mensual | Nada automatizado todavía | Reservado para revisión manual de `lynch_category`/`modelo_negocio` |
 
 20:00 ART queda después del cierre de BYMA (17:00) y de NYSE/NASDAQ (17:00–18:00

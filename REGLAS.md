@@ -68,7 +68,7 @@ Máximo 2 por sector **y** 2 por región real. El sector solo no alcanza: las ar
 
 | Pieza | Qué hace | Motivo |
 |---|---|---|
-| `fact_cartera_seleccionada` | Guarda cada cartera elegida, con el cierre del día como precio de selección. `run_semanal.ps1` guarda una por semana (`origen = 'semanal'`); la que se decide usar se guarda con `--guardar=manual`. | No guardábamos qué elegíamos: no había forma de saber si el ranking funciona. |
+| `fact_cartera_seleccionada` | Guarda cada cartera elegida, con el cierre del día como precio de selección. La corrida diaria guarda una por semana, la primera de cada semana (`origen = 'semanal'`); la que se decide usar se guarda con `--guardar=manual`. | No guardábamos qué elegíamos: no había forma de saber si el ranking funciona. |
 | `monitoreo_cartera.py` | Reporte diario de la última cartera guardada (`reportes/monitoreo_<fecha>.md`) y notificación de Windows si hay alertas. | SK Hynix cayó 25% en 8 ruedas y nos enteramos porque el usuario lo vio por su cuenta. |
 | `evaluar_carteras.py` | Compara cada cartera guardada contra la mediana del universo y el S&P. | El ranking nunca se había probado. |
 
@@ -99,3 +99,4 @@ Que algo haya sido refugio no lo hace barato: mirarlo junto con valuación y té
 | 2026-10-16 | Liquidez de alerta a filtro | B-Gaming 2.ª del ranking con cotización muerta |
 | 2026-10-16 | Capa silver; filtros de datos e historia; P/E neutral en cíclicas y ganancias no recurrentes; tenencia institucional de listados nuevos anulada | SK Hynix 1.ª del ranking con 69 días de historia, P/E de pico de ciclo y datos inconsistentes |
 | 2026-10-16 | Registro de carteras, monitoreo diario con notificación, evaluación; segmento de refugios | No se guardaban las carteras ni se las vigilaba |
+| 2026-10-20 | Guardado semanal pasa de la corrida semanal a la diaria; métricas con forward-fill en salud financiera y silver | El 18/10 la semanal corrió entre pesado y liviano, con la fila de métricas a medio llenar, y no pasó ninguna empresa |

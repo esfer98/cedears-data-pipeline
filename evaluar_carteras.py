@@ -10,7 +10,7 @@ precio de cierre del dia de la seleccion) contra:
 Hasta octubre de 2026 el ranking nunca se habia probado: se armo, parecio
 razonable y se uso. No se puede probar hacia atras porque los fundamentales
 diarios recien se guardan desde el 14/08/2026, asi que la evaluacion es
-hacia adelante: cuantas mas carteras guardadas (run_semanal.ps1 guarda una
+hacia adelante: cuantas mas carteras guardadas (run_diario.ps1 guarda una
 por semana), mas confiable la respuesta. Con pocas semanas de historia el
 resultado es ruido -- lo dice el propio reporte.
 

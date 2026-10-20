@@ -67,7 +67,5 @@ function Run-Paso {
 Run-Paso "listado_cedears" "listado_cedears.py"
 Run-Paso "analisis_fundamental_pesado" "analisis_fundamental_pesado.py"
 Run-Paso "consenso_analistas" "consenso_analistas.py"
-# Una cartera por semana guardada automaticamente: es la serie que permite
-# evaluar si el ranking funciona (evaluar_carteras.py), aunque no se use.
-Run-Paso "cartera_semanal" "seleccionar_cartera.py" "--guardar=semanal"
-Run-Paso "evaluar_carteras" "evaluar_carteras.py"
+# La cartera semanal y su evaluacion corren en run_diario.ps1, con los datos
+# del dia completos (ver seleccionar_cartera.py).

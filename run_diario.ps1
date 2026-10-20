@@ -58,12 +58,12 @@ $logFile = Join-Path $logDir ("diario_{0}.log" -f (Get-Date -Format "yyyy-MM-dd_
 # a los reintentos. Con consola propia solo muere el paso y se reintenta.
 # Probado con un crash real (access violation) y un evento de consola.
 function Run-Paso {
-    param([string]$Nombre, [string]$Script, [int]$MaxIntentos = 3)
+    param([string]$Nombre, [string]$Script, [string]$Argumentos = "", [int]$MaxIntentos = 3)
     $salida = Join-Path $logDir "_tmp_$Nombre.out"
     $errores = Join-Path $logDir "_tmp_$Nombre.err"
     for ($intento = 1; $intento -le $MaxIntentos; $intento++) {
         "=== $Nombre intento $intento/$MaxIntentos ($(Get-Date -Format s)) ===" | Out-File -FilePath $logFile -Append -Encoding utf8
-        $proc = Start-Process -FilePath $python -ArgumentList "`"$Script`"" -WorkingDirectory $PSScriptRoot `
+        $proc = Start-Process -FilePath $python -ArgumentList "`"$Script`" $Argumentos" -WorkingDirectory $PSScriptRoot `
             -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $salida -RedirectStandardError $errores
         foreach ($f in @($salida, $errores)) {
             if (Test-Path $f) {
@@ -96,6 +96,9 @@ Run-Paso "gold_ondas" "gold\ondas.py"
 Run-Paso "gold_refugio" "gold\refugio.py"
 Run-Paso "gold_salud_financiera" "gold\salud_financiera.py"
 Run-Paso "gold_sentimiento" "gold\sentimiento.py"
+# Guarda una cartera por semana (la primera corrida de cada semana; las demas no hacen nada).
+Run-Paso "cartera_semanal" "seleccionar_cartera.py" "--guardar=semanal"
+Run-Paso "evaluar_carteras" "evaluar_carteras.py"
 Run-Paso "monitoreo_cartera" "monitoreo_cartera.py"
 
 # Aviso visible si el monitoreo encontro algo: un reporte que nadie abre es lo
