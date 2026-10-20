@@ -71,7 +71,6 @@ Máximo 2 por sector **y** 2 por región real. El sector solo no alcanza: las ar
 | `fact_cartera_seleccionada` | Guarda cada cartera elegida, con el cierre del día como precio de selección. La corrida diaria guarda una por semana, la primera de cada semana (`origen = 'semanal'`); la que se decide usar se guarda con `--guardar=manual`. | No guardábamos qué elegíamos: no había forma de saber si el ranking funciona. |
 | `monitoreo_cartera.py` | Reporte diario de la última cartera guardada (`reportes/monitoreo_<fecha>.md`) y notificación de Windows si hay alertas. | SK Hynix cayó 25% en 8 ruedas y nos enteramos porque el usuario lo vio por su cuenta. |
 | `evaluar_carteras.py` | Compara cada cartera guardada contra la mediana del universo y el S&P. | El ranking nunca se había probado. |
-
 | `seguimiento` / `seguimiento.py` | Lista de acciones a vigilar antes de comprarlas, con soporte, resistencia y nivel de salida. El monitoreo avisa al tocar un nivel, 7 días antes del reporte y durante los 7 días posteriores, con la reacción del precio. | Para entradas planificadas (por ejemplo "entrar post-reporte") sin depender de acordarse de mirar. |
 
 Alertas del monitoreo: caída de más de 10% en 5 ruedas, más de 15% desde la selección, RSI ≤ 25 o ≥ 80, resultados en los próximos 7 días, noticias negativas, error de datos. **Avisan, no venden.**
