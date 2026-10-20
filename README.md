@@ -178,6 +178,11 @@ modelo dimensional:
   (PK `fecha_seleccion` + `origen` + `ticker_usd`) con el cierre del día como
   precio de selección. Es la memoria que usan `monitoreo_cartera.py` y
   `evaluar_carteras.py`. Ver [REGLAS.md](REGLAS.md).
+- **`seguimiento`** — acciones que se vigilan sin estar en la cartera (PK
+  `ticker_usd`), con motivo y niveles opcionales de soporte, resistencia y
+  salida. La carga el usuario con `seguimiento.py`; `monitoreo_cartera.py` la
+  incluye en el reporte diario y avisa al llegar a un nivel, antes del
+  reporte de resultados y durante la semana posterior, con la reacción del precio.
 - **`log_ejecuciones`** — append-only, una fila por corrida de cada script
   (`ok`/`error`, cuántas filas afectó, y el detalle si falló). Sirve para
   tres cosas: idempotencia (no repetir un job que ya corrió hoy si el
@@ -322,7 +327,8 @@ cedears-data-pipeline/
 ├── sentimiento_noticias.py # titulares (Google News RSS) + sentimiento FinBERT -> fact_noticias
 ├── correcciones_sector.py  # override manual de sector cuando Yahoo clasifica mal -> dim_empresa.sector_corregido
 ├── seleccionar_cartera.py  # cartera de 7-9: filtros obligatorios + ranking + diversificacion (--guardar=manual|semanal la registra)
-├── monitoreo_cartera.py    # reporte diario de la ultima cartera guardada -> reportes/ (alertas, no vende)
+├── monitoreo_cartera.py    # reporte diario de la ultima cartera guardada + lista de seguimiento -> reportes/ (alertas, no vende)
+├── seguimiento.py          # lista de seguimiento: agregar/quitar/listar acciones a vigilar con soporte, resistencia y nivel de salida
 ├── evaluar_carteras.py     # cada cartera guardada vs. universo y S&P (el ranking se prueba hacia adelante)
 ├── REGLAS.md               # todas las reglas de la cartera y el motivo de cada una
 ├── run_diario.ps1          # wrapper para Task Scheduler: precios + liviano + macro + dolar + noticias + gold (diario)

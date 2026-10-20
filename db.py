@@ -1,7 +1,7 @@
 """
 db.py
 -----
-Warehouse local en DuckDB (un solo archivo, sin servidor) con 10 tablas:
+Warehouse local en DuckDB (un solo archivo, sin servidor) con 11 tablas:
 
   dim_empresa                  - descriptiva, cambia poco (PK: ticker_usd)
   fact_metrics_daily           - ratios de valuacion y momentum, una fila por dia (PK: ticker_usd + fecha)
@@ -19,6 +19,9 @@ Warehouse local en DuckDB (un solo archivo, sin servidor) con 10 tablas:
   fact_cartera_seleccionada    - cada cartera que eligio seleccionar_cartera.py --guardar, una fila
                                   por empresa (PK: fecha_seleccion + origen + ticker_usd) -- es la
                                   memoria que permite evaluar si el ranking funciona (evaluar_carteras.py)
+  seguimiento                  - acciones que se siguen sin estar en la cartera (todavia), con niveles
+                                  de precio a vigilar (PK: ticker_usd) -- la carga seguimiento.py y la
+                                  lee monitoreo_cartera.py
 
 listado_cedears.py, analisis_fundamental_liviano.py/_pesado.py,
 precios_historicos.py y macro_diario.py escriben cada uno las columnas/tablas
@@ -198,6 +201,19 @@ CREATE TABLE IF NOT EXISTS fact_cartera_seleccionada (
     region           VARCHAR,
     alertas          VARCHAR,
     PRIMARY KEY (fecha_seleccion, origen, ticker_usd)
+);
+
+-- Lista de seguimiento: la carga el usuario con seguimiento.py (no la llena
+-- ningun script automatico). Los niveles son opcionales: soporte/resistencia
+-- avisan cuando el precio llega, salida avisa si se rompe la tesis.
+CREATE TABLE IF NOT EXISTS seguimiento (
+    ticker_usd        VARCHAR PRIMARY KEY,
+    desde             DATE,
+    motivo            VARCHAR,
+    nivel_soporte     DOUBLE,
+    nivel_resistencia DOUBLE,
+    nivel_salida      DOUBLE,
+    activo            BOOLEAN DEFAULT TRUE
 );
 
 -- Log append-only (sin PK a proposito): cada corrida de cada script deja una

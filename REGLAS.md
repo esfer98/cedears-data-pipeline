@@ -72,6 +72,8 @@ Máximo 2 por sector **y** 2 por región real. El sector solo no alcanza: las ar
 | `monitoreo_cartera.py` | Reporte diario de la última cartera guardada (`reportes/monitoreo_<fecha>.md`) y notificación de Windows si hay alertas. | SK Hynix cayó 25% en 8 ruedas y nos enteramos porque el usuario lo vio por su cuenta. |
 | `evaluar_carteras.py` | Compara cada cartera guardada contra la mediana del universo y el S&P. | El ranking nunca se había probado. |
 
+| `seguimiento` / `seguimiento.py` | Lista de acciones a vigilar antes de comprarlas, con soporte, resistencia y nivel de salida. El monitoreo avisa al tocar un nivel, 7 días antes del reporte y durante los 7 días posteriores, con la reacción del precio. | Para entradas planificadas (por ejemplo "entrar post-reporte") sin depender de acordarse de mirar. |
+
 Alertas del monitoreo: caída de más de 10% en 5 ruedas, más de 15% desde la selección, RSI ≤ 25 o ≥ 80, resultados en los próximos 7 días, noticias negativas, error de datos. **Avisan, no venden.**
 
 La evaluación es solo hacia adelante: los fundamentales diarios se guardan recién desde el 14/08/2026, así que no se puede reconstruir el ranking en el pasado. Antes de 3 meses por cartera, cualquier diferencia es ruido.
@@ -99,4 +101,5 @@ Que algo haya sido refugio no lo hace barato: mirarlo junto con valuación y té
 | 2026-10-16 | Liquidez de alerta a filtro | B-Gaming 2.ª del ranking con cotización muerta |
 | 2026-10-16 | Capa silver; filtros de datos e historia; P/E neutral en cíclicas y ganancias no recurrentes; tenencia institucional de listados nuevos anulada | SK Hynix 1.ª del ranking con 69 días de historia, P/E de pico de ciclo y datos inconsistentes |
 | 2026-10-16 | Registro de carteras, monitoreo diario con notificación, evaluación; segmento de refugios | No se guardaban las carteras ni se las vigilaba |
+| 2026-10-20 | Lista de seguimiento en el monitoreo (primera: UBER, entrada post-reporte del 4/11) | Vigilar entradas planificadas, no solo la cartera |
 | 2026-10-20 | Guardado semanal pasa de la corrida semanal a la diaria; métricas con forward-fill en salud financiera y silver | El 18/10 la semanal corrió entre pesado y liviano, con la fila de métricas a medio llenar, y no pasó ninguna empresa |
