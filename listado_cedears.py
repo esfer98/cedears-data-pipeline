@@ -6,6 +6,10 @@ repetir las variantes de liquidacion: pesos / "C" / "D" son el mismo papel).
 Tres fuentes, tres "mercado" distintos en dim_empresa:
 
   1. CEDEARs (usa_otros / brasil) -- empresas extranjeras operables via IOL.
+     Los CEDEARs de ETF (GLD, COPX, SPY, EWZ...) van aparte, con
+     mercado = "etf": tienen precio pero no balances, asi que no entran a
+     los analisis de empresas (Lynch, salud, ranking) pero si a precios,
+     tecnico y refugios.
   2. Acciones argentinas locales (argentina_local) -- panel Merval y afines
      de IOL, no son CEDEARs, son las empresas argentinas en si.
   3. Cripto (cripto) -- BTC/ETH/SOL, fijos, sin pasar por IOL.
@@ -28,7 +32,7 @@ from iol_client import IOLClient
 load_dotenv()
 
 # Los ETF-CEDEAR (SPDR, iShares, Invesco, etc.) no son empresas: no tienen
-# estados de resultados que analizar, asi que se descartan del listado.
+# estados de resultados que analizar. Se separan con mercado = "etf".
 PATRON_ETF = re.compile(
     r"(?i)\betf\b|select sector|spdr|ishares|invesco|proshares|direxion"
     r"|van eck|vanguard|global x|\bipath\b|\btrust\b|\bfund\b"
@@ -55,7 +59,12 @@ DUPLICADOS_LITERALES_A_DESCARTAR = {
     "GOGLC",  # = GOOGL (nombre viejo "Google Inc", IOL nunca lo renombro)
     "BKC*",   # = BNY (Bank Of New York Mellon, variante "Cta.Ext")
     "VAL3C",  # = VALE (mismo Vale, pero via el ADR de EE.UU. ya alcanza)
+    "BMNRD",  # = BMNR (Bitmine), variante que no se agrupaba y quedaba sin precio
 }
+
+# ETF cuya base no aparece en el panel (solo estan sus variantes C/D): IOL
+# corta la descripcion y no se puede deducir la base sola.
+ETF_BASE_MANUAL = {"XLCC": "XLC", "XLYC": "XLY", "XLYD": "XLY"}
 
 
 def es_duplicado(ticker: str) -> bool:
@@ -80,6 +89,9 @@ TICKERS_YAHOO = {
     "NOKA": "NOK", "PKS": "PKX", "TXR": "TX", "TRVV": "TRV",
     "DISN": "DIS", "WBO": "WB", "XROX": "XRX", "BBV": "BBVA",
     "ADGO": "AGRO",
+    # Verificados contra yfinance el 26/10/2026 (quedaban sin precio): ADR en dolares
+    "BAYN": "BAYRY",     # Bayer
+    "YZCA": "YZCAY",     # Yankuang Energy (ex Yanzhou Coal)
     # Listados en otras bolsas: Yahoo pide el sufijo de esa plaza
     "ADS": "ADS.DE",     # Adidas, Frankfurt
     "AKO.B": "AKO-B",    # Embotelladora Andina, clase B
@@ -168,10 +180,51 @@ def _deduplicar_por_empresa(titulos: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(filas)
 
 
+def _base_etf(simbolo: str, simbolos_etf: set[str]) -> str:
+    if simbolo in ETF_BASE_MANUAL:
+        return ETF_BASE_MANUAL[simbolo]
+    return simbolo[:-1] if simbolo[-1] in "CD" and simbolo[:-1] in simbolos_etf else simbolo
+
+
+def separar_etfs(titulos: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(empresas, etfs). Un titulo es ETF si su descripcion lo dice o si es
+    variante C/D de un ETF: IOL corta descripciones ("The Technology Select S")
+    y por la descripcion sola XLKC se colaba como empresa sin precio."""
+    por_descripcion = {t["simbolo"] for t in titulos if PATRON_ETF.search(t.get("descripcion") or "")}
+    simbolos_etf = por_descripcion | set(ETF_BASE_MANUAL)
+    bases = {_base_etf(s, simbolos_etf) for s in simbolos_etf}
+    todos = {t["simbolo"] for t in titulos}
+    es_etf = {s for s in todos if s in simbolos_etf or s in bases or (s[-1] in "CD" and s[:-1] in bases)}
+    empresas = [t for t in titulos if t["simbolo"] not in es_etf]
+    etfs = [t for t in titulos if t["simbolo"] in es_etf]
+    return empresas, etfs
+
+
+def filas_etf(etfs: list[dict]) -> list[dict]:
+    """Una fila por ETF (las variantes C/D son el mismo papel); Yahoo lo pide por la base."""
+    simbolos = {t["simbolo"] for t in etfs} | set(ETF_BASE_MANUAL.values())
+    grupos: dict[str, list[dict]] = {}
+    for t in etfs:
+        grupos.setdefault(_base_etf(t["simbolo"], simbolos), []).append(t)
+    filas = []
+    for base, grupo in sorted(grupos.items()):
+        descripcion = next((t["descripcion"] for t in grupo if t["simbolo"] == base), grupo[0]["descripcion"])
+        filas.append({
+            "ticker_usd": base, "ticker_cedear": base, "ticker_yahoo": base, "ticker_adr_usa": None,
+            "mercado": "etf", "nombre_empresa": normalizar_empresa(descripcion).title(),
+            "variantes": ", ".join(sorted(t["simbolo"] for t in grupo)),
+        })
+    return filas
+
+
+def listar_etfs(iol: IOLClient) -> pd.DataFrame:
+    _, etfs = separar_etfs(iol.cedears_panel()["titulos"])
+    return pd.DataFrame(filas_etf(etfs))
+
+
 def listar_empresas(iol: IOLClient) -> pd.DataFrame:
-    """Panel de CEDEARs, una fila por empresa."""
-    panel = iol.cedears_panel()
-    titulos = [t for t in panel["titulos"] if not PATRON_ETF.search(t.get("descripcion") or "")]
+    """Panel de CEDEARs, una fila por empresa (sin ETF)."""
+    titulos, _ = separar_etfs(iol.cedears_panel()["titulos"])
     dedup = _deduplicar_por_empresa(titulos)
     dedup = dedup[~dedup["ticker"].apply(es_duplicado)]
 
@@ -270,12 +323,14 @@ def main() -> None:
     print("Ingreso a IOL: OK\n")
 
     cedears = listar_empresas(iol)
+    etfs = listar_etfs(iol)
     argentina = listar_acciones_argentinas(iol)
     cripto = listar_cripto()
-    empresas = pd.concat([cedears, argentina, cripto], ignore_index=True)
+    empresas = pd.concat([cedears, etfs, argentina, cripto], ignore_index=True)
 
     print(f"Universo total: {len(empresas)}")
     print(f"  CEDEARs: {len(cedears)} (de Brasil: {(cedears['mercado'] == 'brasil').sum()})")
+    print(f"  ETF: {len(etfs)}")
     print(f"  Acciones argentinas locales: {len(argentina)} "
           f"(con ADR en EE.UU.: {argentina['ticker_adr_usa'].notna().sum()})")
     print(f"  Cripto: {len(cripto)}\n")
@@ -290,7 +345,10 @@ def main() -> None:
     con = db.conectar()
     with db.registrar(con, "listado_cedears") as log:
         db.upsert_dim_empresa(con, empresas.to_dict("records"))
+        salen = db.depurar_fuera_de_universo(con, set(empresas["ticker_usd"]))
         log["filas_afectadas"] = len(empresas)
+    if salen:
+        print(f"Salieron del universo (se borraron sus datos): {', '.join(salen)}")
     con.close()
     print("dim_empresa actualizada en data/warehouse.duckdb")
 

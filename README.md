@@ -321,7 +321,7 @@ cedears-data-pipeline/
 ├── requirements.txt
 ├── db.py                  # conexion + schema + upserts de DuckDB
 ├── iol_client.py           # cliente de la API de IOL (auth + endpoints)
-├── listado_cedears.py      # universo IOL (CEDEARs + acciones argentinas) + criptomonedas fijas -> dim_empresa + cedears_normalizados.csv
+├── listado_cedears.py      # universo IOL (CEDEARs + ETF + acciones argentinas) + cripto -> dim_empresa; depura lo que sale del universo
 ├── analisis_fundamental_liviano.py  # .info de Yahoo (diario) -> fact_metrics_daily (ratios de valuación) + sector/industria
 ├── analisis_fundamental_pesado.py   # income statement/balance/cashflow/earnings de Yahoo (semanal) -> momentum + series crudas
 ├── precios_historicos.py   # OHLCV de Yahoo -> fact_precios_daily

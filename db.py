@@ -61,6 +61,13 @@ import pandas as pd
 
 DB_PATH = Path("data/warehouse.duckdb")
 
+# Mercados con precio pero sin balances: no se les piden fundamentales, consenso ni noticias.
+MERCADOS_SIN_FUNDAMENTALES = ("cripto", "etf")
+
+
+def con_fundamentales(universo: pd.DataFrame) -> pd.DataFrame:
+    return universo[~universo["mercado"].isin(MERCADOS_SIN_FUNDAMENTALES)].reset_index(drop=True)
+
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS dim_empresa (
     ticker_usd       VARCHAR PRIMARY KEY,
@@ -299,6 +306,37 @@ def upsert_dim_empresa(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> Non
             for f in filas
         ],
     )
+
+
+# Tablas por empresa que se depuran cuando una empresa sale del universo.
+# seguimiento y fact_cartera_seleccionada NO: son decisiones del usuario e historia.
+TABLAS_POR_EMPRESA = [
+    "fact_precios_daily", "fact_metrics_daily", "fact_income_statement_annual",
+    "fact_balance_cashflow_annual", "fact_eps_trimestral", "fact_consenso_analistas",
+    "fact_noticias", "fact_precios_adr",
+]
+MINIMO_UNIVERSO_PARA_DEPURAR = 0.9
+
+
+def depurar_fuera_de_universo(con: duckdb.DuckDBPyConnection, universo: set[str]) -> list[str]:
+    """Borra dim_empresa y los facts de las empresas que ya no estan en el
+    universo de IOL (Schwab y AXIA dejaron de listarse en octubre 2026 y
+    quedaban como "precio desactualizado"), y los precios huerfanos de tickers
+    que nunca estuvieron en dim (WEGE3.SA). Si el universo nuevo tiene menos
+    del 90% de las empresas actuales no borra nada: un panel de IOL a medias
+    no puede vaciar el warehouse."""
+    actuales = {t for (t,) in con.execute("SELECT ticker_usd FROM dim_empresa").fetchall()}
+    if actuales and len(universo & actuales) < MINIMO_UNIVERSO_PARA_DEPURAR * len(actuales):
+        print(f"Universo nuevo sospechoso ({len(universo)} vs {len(actuales)} actuales): no se depura nada.")
+        return []
+    con.register("universo_temp", pd.DataFrame({"ticker_usd": sorted(universo)}))
+    salen = set()
+    for tabla in ["dim_empresa"] + TABLAS_POR_EMPRESA:
+        salen |= {t for (t,) in con.execute(
+            f"SELECT DISTINCT ticker_usd FROM {tabla} WHERE ticker_usd NOT IN (SELECT ticker_usd FROM universo_temp)").fetchall()}
+        con.execute(f"DELETE FROM {tabla} WHERE ticker_usd NOT IN (SELECT ticker_usd FROM universo_temp)")
+    con.unregister("universo_temp")
+    return sorted(salen)
 
 
 def aplicar_correcciones_sector(con: duckdb.DuckDBPyConnection, correcciones: list[dict]) -> None:

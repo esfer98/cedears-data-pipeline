@@ -218,7 +218,7 @@ def main() -> None:
         return
 
     universo = pd.read_csv("data/cedears_normalizados.csv")
-    universo = universo[universo["mercado"] != "cripto"].reset_index(drop=True)
+    universo = db.con_fundamentales(universo)
 
     filas = []
     filas_income_statement = []

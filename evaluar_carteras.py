@@ -46,7 +46,7 @@ universo AS (
     FROM (SELECT DISTINCT fecha_seleccion FROM fact_cartera_seleccionada) c
     JOIN fact_precios_daily p ON p.fecha = (
         SELECT MAX(fecha) FROM fact_precios_daily WHERE fecha <= c.fecha_seleccion AND ticker_usd = 'AAPL')
-    JOIN dim_empresa d ON d.ticker_usd = p.ticker_usd AND d.mercado != 'cripto'
+    JOIN dim_empresa d ON d.ticker_usd = p.ticker_usd AND d.mercado NOT IN ('cripto', 'etf')
     JOIN ultimo u ON u.ticker_usd = p.ticker_usd
     WHERE p.adj_close > 0
     GROUP BY 1

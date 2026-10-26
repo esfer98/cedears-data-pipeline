@@ -30,7 +30,8 @@ gold/ondas.py) en dos tablas que se reescriben enteras:
                               "Defensiva": captura <= 0.6.
                               "No es refugio": el resto.
 
-Solo mide mercado = 'usa_otros' (CEDEARs y ADR en dolares): el panel
+Mide mercado = 'usa_otros' y 'etf' (CEDEARs, ADR y ETF en dolares: GLD,
+COPX, SPY...). No mide los paneles locales: el panel
 argentino y las BDR brasileñas cotizan en su moneda y siguen a su propio
 mercado, asi que su baja correlacion con el S&P no es refugio sino otro
 mercado (y las de cotizacion muerta, como B-Gaming, salian como "refugio"
@@ -78,6 +79,17 @@ def detectar_episodios(sp: pd.Series) -> list[tuple[pd.Timestamp, pd.Timestamp]]
     return episodios
 
 
+MERCADOS_REFUGIO = ("usa_otros", "etf")
+
+
+def precios_para_refugio(con) -> pd.DataFrame:
+    return con.execute(f"""
+        SELECT p.ticker_usd, p.fecha, p.adj_close
+        FROM fact_precios_daily p JOIN dim_empresa d USING (ticker_usd)
+        WHERE p.adj_close > 0 AND d.mercado IN {MERCADOS_REFUGIO}
+    """).fetchdf()
+
+
 def main() -> None:
     con = db.conectar()
     with db.registrar(con, "gold_refugio") as log:
@@ -85,11 +97,7 @@ def main() -> None:
         sp = sp.set_index(pd.to_datetime(sp["fecha"]))["valor"]
         episodios = detectar_episodios(sp)
 
-        px = con.execute("""
-            SELECT p.ticker_usd, p.fecha, p.adj_close
-            FROM fact_precios_daily p JOIN dim_empresa d USING (ticker_usd)
-            WHERE p.adj_close > 0 AND d.mercado = 'usa_otros'
-        """).fetchdf()
+        px = precios_para_refugio(con)
         px["fecha"] = pd.to_datetime(px["fecha"])
         # Se alinea al calendario del S&P (ffill de hasta 3 dias para ADR con feriados de su pais).
         precios = px.pivot(index="fecha", columns="ticker_usd", values="adj_close").sort_index().reindex(sp.index).ffill(limit=3)

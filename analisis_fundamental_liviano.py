@@ -170,7 +170,7 @@ def main() -> None:
         return
 
     universo = pd.read_csv("data/cedears_normalizados.csv")
-    universo = universo[universo["mercado"] != "cripto"].reset_index(drop=True)
+    universo = db.con_fundamentales(universo)
 
     filas = []
     for i, fila_universo in enumerate(universo.itertuples(), 1):
