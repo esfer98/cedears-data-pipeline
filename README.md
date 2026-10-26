@@ -182,6 +182,13 @@ modelo dimensional:
   `precios_historicos.py`. Con el CCL histórico, `precio local / (ADR × CCL)`
   da un ratio casi constante por empresa (±1% en 2025-2026): sirve para
   estimar el ratio de conversión desde los datos y medir la brecha implícita.
+- **`fact_resultados_trimestrales`** — ~5 trimestres por empresa: ingresos,
+  ganancia operativa, ganancia neta, resultado por participaciones,
+  no recurrentes, flujo de caja libre, recompras y pagos en acciones. Existe
+  porque la ganancia neta sola engaña (Uber, octubre 2026).
+- **`fact_insider_transacciones`** — compras y ventas de directivos (solo
+  empresas que reportan en EE.UU.). Solo las compras en el mercado son señal;
+  `gold_insiders` las resume a 90 días.
 - **`seguimiento`** — acciones que se vigilan sin estar en la cartera (PK
   `ticker_usd`), con motivo y niveles opcionales de soporte, resistencia y
   salida. La carga el usuario con `seguimiento.py`; `monitoreo_cartera.py` la
@@ -224,6 +231,8 @@ python monitoreo_cartera.py              # reporte de la ultima cartera guardada
 python listado_cedears.py                # universo IOL -> dim_empresa + cedears_normalizados.csv
 python analisis_fundamental_pesado.py    # income statement, balance, cashflow, earnings (Yahoo, 4 calls/ticker)
 python consenso_analistas.py             # precio objetivo + recomendaciones (Yahoo, 2 calls/ticker)
+python resultados_trimestrales.py        # trimestres: ganancia operativa, participaciones, flujo de caja, recompras
+python insiders.py                       # transacciones de directivos (formulario 4)
 ```
 
 `listado_cedears.py` tiene que correr antes que cualquier otro Yahoo: los
@@ -328,6 +337,8 @@ cedears-data-pipeline/
 ├── macro_diario.py         # tasas/VIX/FX/commodities/indices de Yahoo -> fact_macro_daily
 ├── dolar_argentina.py      # oficial/blue/MEP/CCL/mayorista/cripto/tarjeta con historia de argentinadatos.com -> fact_macro_daily
 ├── consenso_analistas.py   # precio objetivo + recomendaciones de Yahoo (semanal) -> fact_consenso_analistas
+├── resultados_trimestrales.py # trimestres de Yahoo (semanal): ganancia operativa vs neta, participaciones, flujo de caja, recompras
+├── insiders.py             # compras y ventas de directivos (formulario 4, semanal) -> fact_insider_transacciones
 ├── sentimiento_noticias.py # titulares (Google News RSS) + sentimiento FinBERT -> fact_noticias
 ├── correcciones_sector.py  # override manual de sector cuando Yahoo clasifica mal -> dim_empresa.sector_corregido
 ├── seleccionar_cartera.py  # cartera de 7-9: filtros obligatorios + ranking + diversificacion (--guardar=manual|semanal la registra)
@@ -350,6 +361,8 @@ cedears-data-pipeline/
 │   ├── ondas.py            # tablas gold_pivots + gold_ondas (swings ZigZag, niveles de Fibonacci, conteo candidato de Elliott) -- unica capa gold materializada, no es vista
 │   ├── salud_financiera.py # vista gold_salud_financiera (score de liquidez/apalancamiento/rentabilidad/cobertura)
 │   ├── sentimiento.py      # vista gold_sentimiento (agrega fact_noticias a score por empresa, ventana 7 dias)
+│   ├── valuacion_historica.py # P/E aproximado de 4-5 años y percentil de hoy contra su propia historia (tablas)
+│   ├── insiders.py         # vista gold_insiders: compras relevantes de directivos en 90 dias
 │   └── refugio.py          # tablas gold_refugio + gold_refugio_episodios (Refugio / Defensiva / No es refugio segun las caidas reales del S&P)
 ├── notebooks/
 │   ├── eda_cedears.ipynb   # EDA sobre el warehouse (calidad de datos, sectores, valuación, momentum, precios, Lynch, vista por acción + volumen histórico, sensibilidad a tasa, técnico, salud financiera, consenso, sentimiento, ondas/Fibonacci/Elliott con backtest de la señal)

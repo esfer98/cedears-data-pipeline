@@ -112,6 +112,7 @@ Que algo haya sido refugio no lo hace barato: mirarlo junto con valuación y té
 | 2026-10-16 | Liquidez de alerta a filtro | B-Gaming 2.ª del ranking con cotización muerta |
 | 2026-10-16 | Capa silver; filtros de datos e historia; P/E neutral en cíclicas y ganancias no recurrentes; tenencia institucional de listados nuevos anulada | SK Hynix 1.ª del ranking con 69 días de historia, P/E de pico de ciclo y datos inconsistentes |
 | 2026-10-16 | Registro de carteras, monitoreo diario con notificación, evaluación; segmento de refugios | No se guardaban las carteras ni se las vigilaba |
+| 2026-10-26 | Datos nuevos: CCL histórico, ADRs argentinos, resultados trimestrales, compras de directivos, valuación contra su propia historia | Pedido del usuario tras el inventario: lo que faltaba para los análisis que veníamos haciendo. Insiders y valuación histórica todavía NO entran al ranking (primero se prueban) |
 | 2026-10-26 | ETF al universo (mercado `etf`: precios, técnico y refugios, sin fundamentales); se depura lo que IOL deja de listar | Refugios con GLD/COPX reales y no aproximados; Schwab y AXIA quedaban como precio desactualizado |
 | 2026-10-26 | Señales de compra en la lista de seguimiento; brasileñas post-elección en seguimiento con `--moneda USDBRL` | Caída de Brasil tras la elección: entrar con datos, no el primer día |
 | 2026-10-26 | RSI = 100 cuando no hubo ruedas en baja (antes quedaba vacío) | Lo encontró un test |

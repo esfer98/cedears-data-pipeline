@@ -1,7 +1,7 @@
 """
 db.py
 -----
-Warehouse local en DuckDB (un solo archivo, sin servidor) con 12 tablas:
+Warehouse local en DuckDB (un solo archivo, sin servidor) con 14 tablas:
 
   dim_empresa                  - descriptiva, cambia poco (PK: ticker_usd)
   fact_metrics_daily           - ratios de valuacion y momentum, una fila por dia (PK: ticker_usd + fecha)
@@ -21,6 +21,10 @@ Warehouse local en DuckDB (un solo archivo, sin servidor) con 12 tablas:
                                   memoria que permite evaluar si el ranking funciona (evaluar_carteras.py)
   fact_precios_adr             - precios en dolares de los ADR de las acciones argentinas que
                                   cotizan tambien en EE.UU. (PK: ticker_usd local + fecha)
+  fact_resultados_trimestrales - resultados por trimestre: ganancia operativa vs neta, resultado por
+                                  participaciones, flujo de caja y recompras (PK: ticker_usd + fecha_trimestre)
+  fact_insider_transacciones   - compras y ventas de directivos (Form 4 de EE.UU.), una fila por
+                                  transaccion (PK: ticker_usd + fecha + insider + acciones + tipo)
   seguimiento                  - acciones que se siguen sin estar en la cartera (todavia), con niveles
                                   de precio a vigilar (PK: ticker_usd) -- la carga seguimiento.py y la
                                   lee monitoreo_cartera.py
@@ -226,6 +230,39 @@ CREATE TABLE IF NOT EXISTS fact_precios_adr (
     PRIMARY KEY (ticker_usd, fecha)
 );
 
+-- Resultados trimestrales: la ganancia neta sola engania (Uber: participaciones en
+-- otras empresas movian +-1.600 M por trimestre). Ver resultados_trimestrales.py.
+CREATE TABLE IF NOT EXISTS fact_resultados_trimestrales (
+    ticker_usd                VARCHAR,
+    fecha_trimestre           DATE,
+    ingresos                  DOUBLE,
+    ganancia_operativa        DOUBLE,
+    ganancia_neta             DOUBLE,
+    resultado_participaciones DOUBLE,  -- "Gain On Sale Of Security": revaluacion/venta de inversiones
+    resultados_no_recurrentes DOUBLE,  -- "Total Unusual Items"
+    eps_diluido               DOUBLE,
+    acciones_diluidas         DOUBLE,
+    flujo_caja_operativo      DOUBLE,
+    flujo_caja_libre          DOUBLE,
+    recompras                 DOUBLE,  -- positivo = plata usada en recomprar acciones
+    pagos_en_acciones         DOUBLE,  -- "Stock Based Compensation"
+    PRIMARY KEY (ticker_usd, fecha_trimestre)
+);
+
+-- Transacciones de directivos. Solo dicen algo las COMPRAS en el mercado (ver
+-- gold/insiders.py): las ventas son impuestos, diversificacion o planes programados.
+CREATE TABLE IF NOT EXISTS fact_insider_transacciones (
+    ticker_usd  VARCHAR,
+    fecha       DATE,
+    insider     VARCHAR,
+    cargo       VARCHAR,
+    tipo        VARCHAR,   -- 'Compra' | 'Venta' | 'Otro' (acciones recibidas como sueldo, regalos...)
+    acciones    BIGINT,
+    valor       DOUBLE,
+    texto       VARCHAR,
+    PRIMARY KEY (ticker_usd, fecha, insider, acciones, tipo)
+);
+
 -- Lista de seguimiento: la carga el usuario con seguimiento.py (no la llena
 -- ningun script automatico). Los niveles son opcionales: soporte/resistencia
 -- avisan cuando el precio llega, salida avisa si se rompe la tesis.
@@ -318,7 +355,7 @@ def upsert_dim_empresa(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> Non
 TABLAS_POR_EMPRESA = [
     "fact_precios_daily", "fact_metrics_daily", "fact_income_statement_annual",
     "fact_balance_cashflow_annual", "fact_eps_trimestral", "fact_consenso_analistas",
-    "fact_noticias", "fact_precios_adr",
+    "fact_noticias", "fact_precios_adr", "fact_resultados_trimestrales", "fact_insider_transacciones",
 ]
 MINIMO_UNIVERSO_PARA_DEPURAR = 0.9
 
@@ -567,6 +604,32 @@ def upsert_fact_precios_adr(con: duckdb.DuckDBPyConnection, precios: pd.DataFram
             adj_close = excluded.adj_close, volume = excluded.volume
     """)
     con.unregister("adr_temp")
+
+
+def upsert_fact_resultados_trimestrales(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> None:
+    if not filas:
+        return
+    columnas = ["ticker_usd", "fecha_trimestre", "ingresos", "ganancia_operativa", "ganancia_neta",
+                "resultado_participaciones", "resultados_no_recurrentes", "eps_diluido", "acciones_diluidas",
+                "flujo_caja_operativo", "flujo_caja_libre", "recompras", "pagos_en_acciones"]
+    actualizar = ", ".join(f"{c} = excluded.{c}" for c in columnas[2:])
+    con.executemany(
+        f"INSERT INTO fact_resultados_trimestrales ({', '.join(columnas)}) VALUES ({', '.join('?' for _ in columnas)}) "
+        f"ON CONFLICT (ticker_usd, fecha_trimestre) DO UPDATE SET {actualizar}",
+        [tuple(f.get(c) for c in columnas) for f in filas],
+    )
+
+
+def upsert_fact_insider_transacciones(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> None:
+    if not filas:
+        return
+    columnas = ["ticker_usd", "fecha", "insider", "cargo", "tipo", "acciones", "valor", "texto"]
+    con.executemany(
+        f"INSERT INTO fact_insider_transacciones ({', '.join(columnas)}) VALUES ({', '.join('?' for _ in columnas)}) "
+        f"ON CONFLICT (ticker_usd, fecha, insider, acciones, tipo) DO UPDATE SET "
+        f"cargo = excluded.cargo, valor = excluded.valor, texto = excluded.texto",
+        [tuple(f.get(c) for c in columnas) for f in filas],
+    )
 
 
 def upsert_fact_macro_daily(con: duckdb.DuckDBPyConnection, macro: pd.DataFrame) -> None:

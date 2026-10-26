@@ -94,6 +94,8 @@ Run-Paso "gold_macro_sensitivity" "gold\macro_sensitivity.py"
 Run-Paso "gold_technical" "gold\technical.py"
 Run-Paso "gold_ondas" "gold\ondas.py"
 Run-Paso "gold_refugio" "gold\refugio.py"
+Run-Paso "gold_valuacion_historica" "gold\valuacion_historica.py"
+Run-Paso "gold_insiders" "gold\insiders.py"
 Run-Paso "gold_salud_financiera" "gold\salud_financiera.py"
 Run-Paso "gold_sentimiento" "gold\sentimiento.py"
 # Guarda una cartera por semana (la primera corrida de cada semana; las demas no hacen nada).

@@ -67,5 +67,7 @@ function Run-Paso {
 Run-Paso "listado_cedears" "listado_cedears.py"
 Run-Paso "analisis_fundamental_pesado" "analisis_fundamental_pesado.py"
 Run-Paso "consenso_analistas" "consenso_analistas.py"
+Run-Paso "resultados_trimestrales" "resultados_trimestrales.py"
+Run-Paso "insiders" "insiders.py"
 # La cartera semanal y su evaluacion corren en run_diario.ps1, con los datos
 # del dia completos (ver seleccionar_cartera.py).
