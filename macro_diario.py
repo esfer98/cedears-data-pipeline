@@ -78,6 +78,11 @@ SERIES = {
     "SP500":   ("^GSPC",    "Indice S&P500"),
     "MERVAL":  ("^MERV",    "Indice Merval (Argentina)"),
     "BOVESPA": ("^BVSP",    "Indice Bovespa (Brasil)"),
+    # Monedas de los balances de ADR extranjeros (unidades de moneda local por dolar): las usa
+    # gold/valuacion_historica.py para pasar la ganancia a la moneda en que cotiza el ADR.
+    **{f"USD{m}": (f"USD{m}=X", f"Dolar vs {m}") for m in [
+        "EUR", "GBP", "JPY", "CNY", "HKD", "TWD", "KRW", "INR", "MXN", "CHF",
+        "CAD", "AUD", "ZAR", "CLP", "COP", "PEN", "DKK", "SEK", "NOK", "ILS", "SGD"]},
 }
 
 

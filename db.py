@@ -273,6 +273,8 @@ def conectar(ruta: Path | str | None = None) -> duckdb.DuckDBPyConnection:
     con.execute("ALTER TABLE dim_empresa ADD COLUMN IF NOT EXISTS sector_corregido VARCHAR")
     # moneda: serie de fact_macro_daily a vigilar para la senal "moneda_estable" (USDBRL para Brasil)
     con.execute("ALTER TABLE seguimiento ADD COLUMN IF NOT EXISTS moneda VARCHAR")
+    con.execute("ALTER TABLE dim_empresa ADD COLUMN IF NOT EXISTS moneda_cotizacion VARCHAR")
+    con.execute("ALTER TABLE dim_empresa ADD COLUMN IF NOT EXISTS moneda_balance VARCHAR")
     return con
 
 
@@ -285,8 +287,9 @@ def upsert_dim_empresa(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> Non
         """
         INSERT INTO dim_empresa (
             ticker_usd, ticker_cedear, ticker_yahoo, ticker_adr_usa, mercado,
-            nombre_empresa, sector, industria, pais_origen, variantes, actualizado_en
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+            nombre_empresa, sector, industria, pais_origen, variantes,
+            moneda_cotizacion, moneda_balance, actualizado_en
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
         ON CONFLICT (ticker_usd) DO UPDATE SET
             ticker_cedear = excluded.ticker_cedear,
             ticker_yahoo = excluded.ticker_yahoo,
@@ -297,12 +300,14 @@ def upsert_dim_empresa(con: duckdb.DuckDBPyConnection, filas: list[dict]) -> Non
             industria = COALESCE(excluded.industria, dim_empresa.industria),
             pais_origen = COALESCE(excluded.pais_origen, dim_empresa.pais_origen),
             variantes = excluded.variantes,
+            moneda_cotizacion = COALESCE(excluded.moneda_cotizacion, dim_empresa.moneda_cotizacion),
+            moneda_balance = COALESCE(excluded.moneda_balance, dim_empresa.moneda_balance),
             actualizado_en = now()
         """,
         [
             (f["ticker_usd"], f.get("ticker_cedear"), f["ticker_yahoo"], f.get("ticker_adr_usa"),
              f["mercado"], f["nombre_empresa"], f.get("sector"), f.get("industria"),
-             f.get("pais_origen"), f["variantes"])
+             f.get("pais_origen"), f["variantes"], f.get("moneda_cotizacion"), f.get("moneda_balance"))
             for f in filas
         ],
     )

@@ -45,7 +45,7 @@ PAUSA_ENTRE_TICKERS = 1.0  # segundos -- 1 sola llamada por ticker, menos presio
 
 # Sube este numero cada vez que obtener_info() empiece a guardar un campo
 # nuevo: invalida el cache viejo (que no lo tiene) sin borrar la carpeta a mano.
-VERSION_CACHE = 1
+VERSION_CACHE = 2  # 2: suma currency/financialCurrency
 
 
 def _cache_path(ticker: str) -> Path:
@@ -82,7 +82,10 @@ CAMPOS_INFO_DIRECTOS = {
     "sharesOutstanding": "shares_outstanding",
 }
 # Estos van a dim_empresa (descriptivos), no a fact_metrics_daily.
-CAMPOS_INFO_DIMENSION = {"sector": "sector", "industry": "industria", "country": "pais_origen"}
+# moneda_balance != moneda_cotizacion en los ADR (Itau: cotiza en USD, reporta en BRL): hace falta
+# para pasar ganancias a la moneda del precio en gold/valuacion_historica.py.
+CAMPOS_INFO_DIMENSION = {"sector": "sector", "industry": "industria", "country": "pais_origen",
+                         "currency": "moneda_cotizacion", "financialCurrency": "moneda_balance"}
 
 # calcular_fila() arma columnas con "%" (para que se lean bien en consola);
 # DuckDB las guarda con sufijo "_pct" (SQL no admite "%" en nombres de
@@ -191,7 +194,7 @@ def main() -> None:
         for f in filas
     ]
     filas_dim = universo.merge(
-        pd.DataFrame(filas)[["ticker", "sector", "industria", "pais_origen"]],
+        pd.DataFrame(filas)[["ticker", "sector", "industria", "pais_origen", "moneda_cotizacion", "moneda_balance"]],
         left_on="ticker_usd", right_on="ticker",
     ).to_dict("records")
 
