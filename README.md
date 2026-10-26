@@ -42,7 +42,7 @@ flowchart LR
         pesado["analisis_fundamental_pesado.py<br/>estados contables (semanal, 4 calls/ticker)"]
         precios["precios_historicos.py<br/>OHLCV"]
         macro["macro_diario.py<br/>tasas, VIX, FX, commodities, indices"]
-        dolar["dolar_argentina.py<br/>oficial/blue/MEP/CCL (dolarapi.com)"]
+        dolar["dolar_argentina.py<br/>oficial/blue/MEP/CCL con historia (argentinadatos.com)"]
         consenso["consenso_analistas.py<br/>precio objetivo + recomendaciones (semanal)"]
         noticias["sentimiento_noticias.py<br/>titulares + FinBERT (Google News RSS)"]
         db["db.py<br/>upsert a DuckDB"]
@@ -149,15 +149,14 @@ modelo dimensional:
   (`DXY`, `USDBRL`, `USDARS`), commodities (`WTI`, `GOLD`, `COPPER`), índices
   de referencia (`SP500`, `MERVAL`, `BOVESPA`), y el dólar argentino
   multi-cotización (`AR_OFICIAL`, `AR_BLUE`, `AR_MEP`, `AR_CCL`,
-  `AR_MAYORISTA`, `AR_CRIPTO`, `AR_TARJETA` — de `dolarapi.com`, ver
+  `AR_MAYORISTA`, `AR_CRIPTO`, `AR_TARJETA` — de `api.argentinadatos.com`, ver
   `dolar_argentina.py`; distinto de `USDARS`, que viene de Yahoo con otra
   metodología, se dejan los dos para comparar). Grano de mercado, no de
   empresa — por eso es una tabla angosta (`serie`, `fecha`, `valor`) en vez
-  de una columna por serie en `fact_metrics_daily`. `dolarapi.com` no tiene
-  histórico (solo el valor del día), así que estas 7 series arrancan desde
-  que se corrió `dolar_argentina.py` por primera vez — no se puede rellenar
-  el pasado, pero de ahí en más se acumula solo (mismo caso que
-  `institutional_holding_pct`).
+  de una columna por serie en `fact_metrics_daily`. La fuente trae la serie
+  histórica completa (CCL desde 2013, oficial y blue desde 2011) y cada
+  corrida la reescribe entera: un día sin corrida se recupera solo. Hasta el
+  26/10/2026 se usaba `dolarapi.com`, que solo daba el valor del día.
 - **`fact_consenso_analistas`** — un snapshot por día (PK `ticker_usd` +
   `fecha`): precio objetivo (actual/bajo/alto/mediana) y conteo de
   recomendaciones (`strong_buy`/`buy`/`hold`/`sell`/`strong_sell`) de los
@@ -201,7 +200,7 @@ distintos sí acumula historial real (no pisa el día anterior).
 python precios_historicos.py             # OHLCV (Yahoo)
 python analisis_fundamental_liviano.py   # .info: P/E, P/B, market cap... (Yahoo, 1 call/ticker)
 python macro_diario.py                   # tasas, VIX, FX, commodities, indices (Yahoo, 16 series)
-python dolar_argentina.py                # oficial/blue/MEP/CCL/mayorista/cripto/tarjeta (dolarapi.com, 7 cotizaciones)
+python dolar_argentina.py                # oficial/blue/MEP/CCL/mayorista/cripto/tarjeta con historia completa (argentinadatos.com)
 python sentimiento_noticias.py           # titulares (Google News RSS) + sentimiento FinBERT -> fact_noticias
 python silver/calidad_datos.py           # controles de calidad -> silver_calidad_datos (marca, no borra; va antes de gold/)
 python gold/lynch.py                     # recalcula la vista gold_lynch (no pide datos nuevos)
@@ -271,7 +270,7 @@ cambia cada fuente:
 | Diaria (~20:00 ART) | `precios_historicos.py` | El precio cambia todos los días hábiles |
 | Diaria (~20:00 ART) | `analisis_fundamental_liviano.py` | Ratios como P/E se mueven con el precio, aunque la empresa no cambie |
 | Diaria (~20:00 ART) | `macro_diario.py` | Tasas/VIX/FX/commodities cambian todos los días hábiles, igual que el precio |
-| Diaria (~20:00 ART) | `dolar_argentina.py` | El dólar (oficial/blue/MEP/CCL) cambia todos los días; la API no tiene histórico, así que hay que pedirlo todos los días para acumularlo |
+| Diaria (~20:00 ART) | `dolar_argentina.py` | El dólar cambia todos los días; trae la serie completa, así que un día perdido se recupera en la corrida siguiente |
 | Diaria (~20:00 ART) | `sentimiento_noticias.py` | Hay noticias nuevas todos los días; el cache por titular evita reprocesar con FinBERT lo que ya se vio |
 | Diaria (~20:00 ART) | `silver/calidad_datos.py` | Controla lo que acaba de entrar (cotizaciones muertas, precios viejos, márgenes incoherentes, monedas mezcladas) antes de que gold/ lo use |
 | Diaria (~20:00 ART) | `gold/lynch.py`, `gold/comparables.py`, `gold/macro_sensitivity.py`, `gold/technical.py`, `gold/ondas.py`, `gold/refugio.py`, `gold/salud_financiera.py`, `gold/sentimiento.py` | Solo recalculan sobre lo que ya se actualizó — sin costo de API |
@@ -322,7 +321,7 @@ cedears-data-pipeline/
 ├── analisis_fundamental_pesado.py   # income statement/balance/cashflow/earnings de Yahoo (semanal) -> momentum + series crudas
 ├── precios_historicos.py   # OHLCV de Yahoo -> fact_precios_daily
 ├── macro_diario.py         # tasas/VIX/FX/commodities/indices de Yahoo -> fact_macro_daily
-├── dolar_argentina.py      # oficial/blue/MEP/CCL/mayorista/cripto/tarjeta de dolarapi.com -> fact_macro_daily
+├── dolar_argentina.py      # oficial/blue/MEP/CCL/mayorista/cripto/tarjeta con historia de argentinadatos.com -> fact_macro_daily
 ├── consenso_analistas.py   # precio objetivo + recomendaciones de Yahoo (semanal) -> fact_consenso_analistas
 ├── sentimiento_noticias.py # titulares (Google News RSS) + sentimiento FinBERT -> fact_noticias
 ├── correcciones_sector.py  # override manual de sector cuando Yahoo clasifica mal -> dim_empresa.sector_corregido

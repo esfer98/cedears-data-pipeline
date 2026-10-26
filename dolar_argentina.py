@@ -2,25 +2,24 @@
 dolar_argentina.py
 -------------------
 Cotizaciones del dólar en Argentina (oficial, blue, MEP, CCL, mayorista,
-cripto, tarjeta) vía dolarapi.com (gratis, sin auth). Yahoo no tiene
-CCL/MEP/blue -- son cotizaciones de mercado específicas de Argentina, no
-están en ningún ticker estándar de Yahoo Finance.
+cripto, tarjeta). Yahoo no tiene CCL/MEP/blue: son cotizaciones de mercado
+específicas de Argentina.
 
-Por qué importa: en notebooks/eda_argentina.ipynb estimamos un "CCL
-implícito" vía arbitraje ADR/local (sin necesitar el ratio de conversión,
-dividiendo retornos). Tener acá el CCL *publicado* de verdad permite
-validar esa estimación contra el dato real, no solo aproximarlo.
+Fuente: api.argentinadatos.com (gratis, sin auth), que trae la SERIE
+HISTÓRICA completa de cada casa (CCL desde 2013, oficial y blue desde 2011).
+Hasta el 26/10/2026 se usaba dolarapi.com, que solo da el valor del día: el
+historial empezaba el 6/10/2026 y un día sin corrida (8/10) se perdía para
+siempre. Con la serie completa, cada corrida reescribe todo el historial
+(son ~25.000 filas en total, un upsert set-based) y un día perdido se
+recupera solo en la corrida siguiente.
 
-A diferencia de macro_diario.py, la API de dolarapi.com NO da histórico --
-solo el valor actual. Cada corrida agrega UNA fila por casa con la fecha de
-hoy; el historial se arma hacia adelante, día a día (mismo patrón que
-institutional_holding_pct en fact_metrics_daily: no se puede rellenar el
-pasado, pero de acá en más queda guardado).
+Para qué: comparar CCL contra oficial (brecha), pasar precios locales a
+dólares con el dólar que de verdad usa el mercado, y medir elecciones o
+crisis pasadas en CCL en vez de en oficial (en 2023 había cepo y el oficial
+no reflejaba nada).
 
-Se escriben en fact_macro_daily (mismo esquema serie/fecha/valor que las
-series de macro_diario.py), con series propias prefijadas "AR_" para no
-confundir con USDARS (que ya viene de Yahoo con otra metodología/fuente --
-se dejan los dos, sirven para comparar entre sí).
+Se escriben en fact_macro_daily con series propias "AR_*" (USDARS de Yahoo
+se mantiene aparte: es el oficial con otra fuente, sirven para cruzarlas).
 
 Correr: python dolar_argentina.py
 """
@@ -35,9 +34,9 @@ import db
 
 load_dotenv()
 
-URL = "https://dolarapi.com/v1/dolares"
+URL = "https://api.argentinadatos.com/v1/cotizaciones/dolares/{casa}"
 
-# "casa" de dolarapi.com -> codigo propio en fact_macro_daily
+# "casa" de la API -> codigo propio en fact_macro_daily
 CASAS = {
     "oficial": "AR_OFICIAL",
     "blue": "AR_BLUE",
@@ -49,6 +48,22 @@ CASAS = {
 }
 
 
+def a_filas(datos: list[dict], serie: str) -> list[dict]:
+    """Respuesta de la API -> filas de fact_macro_daily. Valor = promedio
+    compra/venta, el criterio con el que se suele reportar "el CCL" como un
+    solo numero."""
+    filas = []
+    for d in datos:
+        if d.get("compra") is None or d.get("venta") is None:
+            continue
+        filas.append({
+            "serie": serie,
+            "fecha": date.fromisoformat(d["fecha"]),
+            "valor": round((d["compra"] + d["venta"]) / 2, 4),
+        })
+    return filas
+
+
 def main() -> None:
     con_check = db.conectar()
     ya_corrio = db.ya_corrio_hoy(con_check, "dolar_argentina")
@@ -57,36 +72,27 @@ def main() -> None:
         print("dolar_argentina ya corrio hoy con exito, no hace falta repetir.")
         return
 
-    r = requests.get(URL, timeout=15)
-    r.raise_for_status()
-    datos = r.json()
-
-    hoy = date.today()
     filas = []
-    for d in datos:
-        serie = CASAS.get(d.get("casa"))
-        if serie is None or d.get("compra") is None or d.get("venta") is None:
-            continue
-        # promedio compra/venta -- mismo criterio que usa la mayoria de los
-        # sitios que reportan "el dolar blue"/"el CCL" como un solo numero.
-        valor = (d["compra"] + d["venta"]) / 2
-        filas.append({"serie": serie, "fecha": hoy, "valor": valor})
+    for casa, serie in CASAS.items():
+        r = requests.get(URL.format(casa=casa), timeout=30)
+        r.raise_for_status()
+        filas.extend(a_filas(r.json(), serie))
 
     if not filas:
-        print("dolarapi.com no devolvio ninguna casa reconocida.")
+        print("argentinadatos.com no devolvio datos.")
         return
 
     todo = pd.DataFrame(filas)
-
     con = db.conectar()
     with db.registrar(con, "dolar_argentina") as log:
         db.upsert_fact_macro_daily(con, todo)
         log["filas_afectadas"] = len(todo)
     con.close()
 
-    print(f"fact_macro_daily actualizada ({len(todo)} cotizaciones, {hoy}):")
-    for f in filas:
-        print(f"  {f['serie']}: {f['valor']:.2f}")
+    ultimas = todo.sort_values("fecha").groupby("serie").tail(1)
+    print(f"fact_macro_daily actualizada ({len(todo)} filas, {todo['fecha'].min()} a {todo['fecha'].max()}):")
+    for f in ultimas.itertuples():
+        print(f"  {f.serie}: {f.valor:.2f} ({f.fecha})")
 
 
 if __name__ == "__main__":
