@@ -77,7 +77,19 @@ Alertas del monitoreo: caída de más de 10% en 5 ruedas, más de 15% desde la s
 
 La evaluación es solo hacia adelante: los fundamentales diarios se guardan recién desde el 14/08/2026, así que no se puede reconstruir el ranking en el pasado. Antes de 3 meses por cartera, cualquier diferencia es ruido.
 
-## 8. Refugios
+## 8. Señales de compra (lista de seguimiento)
+
+Para acciones que vienen de una caída fuerte (Brasil después de la elección de octubre 2026). Ninguna sola dice "comprar"; el monitoreo avisa **"posible punto de entrada" con 3 o más activas**. Definidas y testeadas en `senales.py`:
+
+| Señal | Se activa cuando | Por qué |
+|---|---|---|
+| Moneda estable | El dólar contra la moneda local no subió en 5 ruedas (solo si la acción tiene `--moneda`) | Para un CEDEAR, si la moneda sigue cayendo el precio en dólares cae aunque la acción se estabilice |
+| Capitulación | En 10 ruedas, un día con 3× el volumen normal y cierre en la mitad alta del rango | Pánico absorbido por compradores |
+| Dejó de hacer mínimos | El mínimo de 20 ruedas está 15%+ abajo del máximo previo, quedó 3+ ruedas atrás y ya rebotó 3% | Sin la caída previa se activaba en cualquier suba (pasó el 26/10/2026 con el rally pre-elección) |
+| Post-reporte | Reportó en los últimos 10 días y el precio no está más de 3% abajo del cierre previo | El reporte es el primer dato real después del shock |
+| RSI recupera | Estuvo debajo de 30 en 15 ruedas y hoy está arriba | Salida de la sobreventa |
+
+## 9. Refugios
 
 `gold/refugio.py` clasifica las acciones en dólares según cómo se comportaron en las caídas reales del S&P de más de 10% (en octubre 2026: 2022 y 2025):
 
@@ -86,7 +98,7 @@ La evaluación es solo hacia adelante: los fundamentales diarios se guardan reci
 
 Que algo haya sido refugio no lo hace barato: mirarlo junto con valuación y técnico. Y un refugio de un tipo de crisis puede no serlo en otra (la energía subió en 2022 y cayó en 2025).
 
-## 9. Forma de trabajo
+## 10. Forma de trabajo
 
 - Lo que surge de un tweet o una idea nueva se analiza primero en una notebook aparte. Entra al ranking solo si pasa una prueba con datos.
 - Revisión los domingos, después de la corrida semanal: leer `reportes/`, correr `seleccionar_cartera.py`, decidir cambios.
@@ -100,5 +112,7 @@ Que algo haya sido refugio no lo hace barato: mirarlo junto con valuación y té
 | 2026-10-16 | Liquidez de alerta a filtro | B-Gaming 2.ª del ranking con cotización muerta |
 | 2026-10-16 | Capa silver; filtros de datos e historia; P/E neutral en cíclicas y ganancias no recurrentes; tenencia institucional de listados nuevos anulada | SK Hynix 1.ª del ranking con 69 días de historia, P/E de pico de ciclo y datos inconsistentes |
 | 2026-10-16 | Registro de carteras, monitoreo diario con notificación, evaluación; segmento de refugios | No se guardaban las carteras ni se las vigilaba |
+| 2026-10-26 | Señales de compra en la lista de seguimiento; brasileñas post-elección en seguimiento con `--moneda USDBRL` | Caída de Brasil tras la elección: entrar con datos, no el primer día |
+| 2026-10-26 | RSI = 100 cuando no hubo ruedas en baja (antes quedaba vacío) | Lo encontró un test |
 | 2026-10-20 | Lista de seguimiento en el monitoreo (primera: UBER, entrada post-reporte del 4/11) | Vigilar entradas planificadas, no solo la cartera |
 | 2026-10-20 | Guardado semanal pasa de la corrida semanal a la diaria; métricas con forward-fill en salud financiera y silver | El 18/10 la semanal corrió entre pesado y liviano, con la fila de métricas a medio llenar, y no pasó ninguna empresa |

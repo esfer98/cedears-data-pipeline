@@ -248,6 +248,8 @@ def conectar(ruta: Path | str | None = None) -> duckdb.DuckDBPyConnection:
     con.execute("ALTER TABLE fact_income_statement_annual ADD COLUMN IF NOT EXISTS gastos_operativos DOUBLE")
     con.execute("ALTER TABLE dim_empresa ADD COLUMN IF NOT EXISTS ticker_adr_usa VARCHAR")
     con.execute("ALTER TABLE dim_empresa ADD COLUMN IF NOT EXISTS sector_corregido VARCHAR")
+    # moneda: serie de fact_macro_daily a vigilar para la senal "moneda_estable" (USDBRL para Brasil)
+    con.execute("ALTER TABLE seguimiento ADD COLUMN IF NOT EXISTS moneda VARCHAR")
     return con
 
 

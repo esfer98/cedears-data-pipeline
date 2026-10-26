@@ -94,3 +94,17 @@ def test_zigzag_detecta_un_maximo_y_un_minimo_alternados():
     assert [(i, tipo) for i, tipo, _ in pivots] == [(0, "L"), (2, "H"), (4, "L")]
     # el pivot se confirma cuando el precio ya se movio el umbral, nunca antes
     assert all(confirmacion > indice for indice, _, confirmacion in pivots)
+
+
+def test_rsi_de_la_vista_tecnica_es_100_si_solo_hubo_subas(con):
+    from gold import technical
+    _empresa(con, "SUBE")
+    insertar(con, "fact_precios_daily", [
+        {"ticker_usd": "SUBE", "fecha": HOY - timedelta(days=30 - i), "open": 10 + i, "high": 10 + i, "low": 10 + i,
+         "close": 10 + i, "adj_close": 10 + i, "volume": 1000}
+        for i in range(30)
+    ])
+    con.execute(technical.SQL_VISTA)
+    rsi, senal = con.execute("SELECT tech_rsi14, tech_rsi_senal FROM gold_technical").fetchone()
+    assert rsi == 100
+    assert senal == "Sobrecomprado"

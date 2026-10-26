@@ -21,6 +21,8 @@ no estan en la cartera. Para esas avisa cuando el precio llega al soporte, la
 resistencia o el nivel de salida, cuando faltan DIAS_RESULTADOS dias para el
 reporte, y durante DIAS_POST_REPORTE dias despues del reporte, con la
 reaccion del precio (para decidir una entrada "post-reporte" con datos).
+Tambien evalua las senales de compra de senales.py (moneda, capitulacion,
+minimos, reporte, RSI) y avisa "posible punto de entrada" con 3 o mas.
 
 Escribe reportes/monitoreo_<fecha>.md y, si hay alertas, reportes/alertas_hoy.txt
 (run_diario.ps1 lo usa para mandar una notificacion de Windows).
@@ -34,6 +36,7 @@ from pathlib import Path
 import pandas as pd
 
 import db
+import senales
 
 CAIDA_SEMANA_PCT = -10
 CAIDA_DESDE_SELECCION_PCT = -15
@@ -85,7 +88,7 @@ reaccion AS (
             ORDER BY fecha LIMIT 1) AS precio_dia_reporte
     FROM reciente r
 )
-SELECT s.ticker_usd, d.nombre_empresa, s.desde, s.motivo, s.nivel_soporte, s.nivel_resistencia, s.nivel_salida,
+SELECT s.ticker_usd, d.nombre_empresa, s.desde, s.motivo, s.nivel_soporte, s.nivel_resistencia, s.nivel_salida, s.moneda,
        px.fecha AS fecha_precio, ROUND(px.adj_close, 2) AS precio,
        ROUND((px.adj_close / px.precio_ayer - 1) * 100, 1) AS dia_pct,
        ROUND((px.adj_close / px.precio_hace_5 - 1) * 100, 1) AS ultimas_5_ruedas_pct,
@@ -197,19 +200,27 @@ def seccion_seguimiento(con) -> tuple[list[str], list[str]]:
     if sg.empty:
         return [], []
     sg["alertas"] = sg.apply(alertas_seguimiento, axis=1)
+    sg["senales"] = [senales.evaluar(con, f.ticker_usd, f.moneda if pd.notna(f.moneda) else None) for f in sg.itertuples()]
+    for i, f in sg.iterrows():
+        activas = senales.cantidad_activas(f.senales)
+        if activas >= senales.MINIMO_PARA_AVISO:
+            nombres = ", ".join(n for n, s in f.senales.items() if s.activa)
+            sg.at[i, "alertas"] = f.alertas + [f"posible punto de entrada: {activas} de {len(f.senales)} señales ({nombres})"]
     lineas = ["", "## En seguimiento (todavía no en la cartera)", "",
-              "| Empresa | Precio | Día | 5 ruedas | Soporte / Resist. / Salida | RSI | Próx. reporte |",
-              "|---|---|---|---|---|---|---|"]
+              "| Empresa | Precio | Día | 5 ruedas | Soporte / Resist. / Salida | RSI | Próx. reporte | Señales |",
+              "|---|---|---|---|---|---|---|---|"]
     for _, f in sg.iterrows():
         niveles = " / ".join("—" if pd.isna(v) else f"{v:g}" for v in (f.nivel_soporte, f.nivel_resistencia, f.nivel_salida))
         prox = pd.Timestamp(f.proximo_reporte).date() if pd.notna(f.proximo_reporte) else "—"
         lineas.append(f"| {f.ticker_usd} — {f.nombre_empresa} | {f.precio} | {f.dia_pct}% | {f.ultimas_5_ruedas_pct}% | "
-                      f"{niveles} | {f.tech_rsi14} | {prox} |")
+                      f"{niveles} | {f.tech_rsi14} | {prox} | {senales.cantidad_activas(f.senales)}/{len(f.senales)} |")
     lineas.append("")
     for _, f in sg.iterrows():
         lineas.append(f"- **{f.ticker_usd}** (desde {pd.Timestamp(f.desde).date()}): {f.motivo or ''}")
         for alerta in f.alertas:
             lineas.append(f"  - {alerta}")
+        for nombre, s in f.senales.items():
+            lineas.append(f"  - [{'x' if s.activa else ' '}] {nombre}: {s.detalle}")
     con_alerta = sg[sg["alertas"].str.len() > 0]["ticker_usd"].tolist()
     return lineas, con_alerta
 

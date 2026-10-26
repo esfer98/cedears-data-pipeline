@@ -328,7 +328,9 @@ cedears-data-pipeline/
 ├── correcciones_sector.py  # override manual de sector cuando Yahoo clasifica mal -> dim_empresa.sector_corregido
 ├── seleccionar_cartera.py  # cartera de 7-9: filtros obligatorios + ranking + diversificacion (--guardar=manual|semanal la registra)
 ├── monitoreo_cartera.py    # reporte diario de la ultima cartera guardada + lista de seguimiento -> reportes/ (alertas, no vende)
-├── seguimiento.py          # lista de seguimiento: agregar/quitar/listar acciones a vigilar con soporte, resistencia y nivel de salida
+├── seguimiento.py          # lista de seguimiento: agregar/quitar/listar acciones a vigilar con soporte, resistencia, salida y moneda
+├── senales.py              # senales de compra para la lista de seguimiento (moneda, capitulacion, minimos, reporte, RSI)
+├── tests/                  # pytest: regresiones de bugs reales + cada modulo nuevo, test primero
 ├── evaluar_carteras.py     # cada cartera guardada vs. universo y S&P (el ranking se prueba hacia adelante)
 ├── REGLAS.md               # todas las reglas de la cartera y el motivo de cada una
 ├── run_diario.ps1          # wrapper para Task Scheduler: precios + liviano + macro + dolar + noticias + gold (diario)

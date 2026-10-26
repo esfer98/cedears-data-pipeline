@@ -153,6 +153,9 @@ combinado AS (
         p.sma20, p.std20, p.max_52s, p.min_52s,
         p.precio_1m, p.precio_3m, p.precio_6m,
         r.avg_gain, r.avg_loss, r.dias_rsi,
+        -- sin ninguna rueda en baja la division no existe: el RSI es 100 por definicion
+        CASE WHEN r.avg_loss = 0 AND r.avg_gain > 0 THEN 100
+             ELSE 100 - 100 / (1 + r.avg_gain / NULLIF(r.avg_loss, 0)) END AS rsi_valor,
         v.vol_prom_30d, v.vol_prom_90d_previo,
         a.atr14, a.dias_atr, a.close AS close_sin_ajustar,
         m.macd, m.macd_senal, m.k AS dias_macd
@@ -170,11 +173,11 @@ SELECT
     CASE WHEN dias_sma200 >= 200 THEN ROUND((adj_close / sma50 - 1) * 100, 1) END AS tech_precio_vs_sma50_pct,
     CASE WHEN dias_sma200 >= 200 THEN ROUND((adj_close / sma200 - 1) * 100, 1) END AS tech_precio_vs_sma200_pct,
     CASE WHEN dias_sma200 >= 200 THEN (CASE WHEN sma50 > sma200 THEN 'Alcista' ELSE 'Bajista' END) END AS tech_tendencia,
-    CASE WHEN dias_rsi >= 14 THEN ROUND(100 - 100 / (1 + avg_gain / NULLIF(avg_loss, 0)), 1) END AS tech_rsi14,
+    CASE WHEN dias_rsi >= 14 THEN ROUND(rsi_valor, 1) END AS tech_rsi14,
     CASE
         WHEN dias_rsi < 14 THEN NULL
-        WHEN 100 - 100 / (1 + avg_gain / NULLIF(avg_loss, 0)) >= 70 THEN 'Sobrecomprado'
-        WHEN 100 - 100 / (1 + avg_gain / NULLIF(avg_loss, 0)) <= 30 THEN 'Sobrevendido'
+        WHEN rsi_valor >= 70 THEN 'Sobrecomprado'
+        WHEN rsi_valor <= 30 THEN 'Sobrevendido'
         ELSE 'Neutral'
     END AS tech_rsi_senal,
     CASE WHEN precio_1m IS NOT NULL THEN ROUND((adj_close / precio_1m - 1) * 100, 1) END AS tech_retorno_1m_pct,
