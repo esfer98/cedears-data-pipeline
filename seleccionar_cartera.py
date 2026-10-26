@@ -224,8 +224,7 @@ def motivos_alerta(f) -> list[str]:
     return motivos
 
 
-def guardar(elegidos: pd.DataFrame, origen: str) -> None:
-    con = db.conectar()
+def guardar(con, elegidos: pd.DataFrame, origen: str) -> None:
     precios = con.execute("""
         SELECT ticker_usd, fecha, adj_close FROM fact_precios_daily
         WHERE ticker_usd = ANY(?) AND adj_close IS NOT NULL
@@ -243,7 +242,6 @@ def guardar(elegidos: pd.DataFrame, origen: str) -> None:
         ).fetchone()[0]
         if ya:
             print(f"\nYa hay una cartera semanal guardada en la semana del {fecha_seleccion}, no se guarda otra.")
-            con.close()
             return
     filas = [{
         "fecha_seleccion": fecha_seleccion, "origen": origen, "ticker_usd": f["ticker_usd"], "puesto": i,
@@ -251,7 +249,6 @@ def guardar(elegidos: pd.DataFrame, origen: str) -> None:
         "sector": f["sector"], "region": f["region"], "alertas": "; ".join(motivos_alerta(f)) or None,
     } for i, (_, f) in enumerate(elegidos.iterrows(), start=1)]
     db.guardar_cartera(con, filas)
-    con.close()
     print(f"\nGuardada en fact_cartera_seleccionada (cierre del {fecha_seleccion}, origen '{origen}')")
 
 
@@ -298,7 +295,9 @@ def main() -> None:
 
     print(f"\nTickers: {', '.join(elegidos['ticker_usd'].tolist())}")
     if origen:
-        guardar(elegidos, origen)
+        con = db.conectar()
+        guardar(con, elegidos, origen)
+        con.close()
 
 
 if __name__ == "__main__":

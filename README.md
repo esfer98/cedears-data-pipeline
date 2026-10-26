@@ -412,6 +412,18 @@ registrado como "Python 3 (.venv)" — si VS Code no lo detecta solo, `Ctrl+Shif
    python gold/refugio.py
    ```
 
+## Pruebas
+
+```bash
+python -m pytest tests -q
+```
+
+Usan un warehouse temporal (`db.conectar(ruta)`), nunca `data/warehouse.duckdb`.
+`tests/test_regresiones.py` reproduce los bugs reales de octubre 2026 (fila de
+métricas a medio llenar, cotizaciones muertas, guardado semanal duplicado,
+fechas de reporte duplicadas de Yahoo): si alguno vuelve, falla un test.
+Todo cambio nuevo se escribe test primero.
+
 ## Notas
 - La API de IOL debe estar habilitada en tu cuenta:
   Mi Cuenta > Personalización > APIs (aceptar términos).

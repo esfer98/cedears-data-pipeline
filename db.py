@@ -234,9 +234,11 @@ CREATE TABLE IF NOT EXISTS log_ejecuciones (
 """
 
 
-def conectar() -> duckdb.DuckDBPyConnection:
-    DB_PATH.parent.mkdir(exist_ok=True)
-    con = duckdb.connect(str(DB_PATH))
+def conectar(ruta: Path | str | None = None) -> duckdb.DuckDBPyConnection:
+    """ruta: solo para los tests (base temporal); el pipeline usa DB_PATH."""
+    ruta = Path(ruta) if ruta else DB_PATH
+    ruta.parent.mkdir(exist_ok=True)
+    con = duckdb.connect(str(ruta))
     con.execute(ESQUEMA)
     # Migracion idempotente: agrega columnas nuevas a bases ya existentes
     # (CREATE TABLE IF NOT EXISTS no alcanza si la tabla ya existia sin esta columna).
