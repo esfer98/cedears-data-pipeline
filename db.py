@@ -1,7 +1,7 @@
 """
 db.py
 -----
-Warehouse local en DuckDB (un solo archivo, sin servidor) con 11 tablas:
+Warehouse local en DuckDB (un solo archivo, sin servidor) con 12 tablas:
 
   dim_empresa                  - descriptiva, cambia poco (PK: ticker_usd)
   fact_metrics_daily           - ratios de valuacion y momentum, una fila por dia (PK: ticker_usd + fecha)
@@ -19,6 +19,8 @@ Warehouse local en DuckDB (un solo archivo, sin servidor) con 11 tablas:
   fact_cartera_seleccionada    - cada cartera que eligio seleccionar_cartera.py --guardar, una fila
                                   por empresa (PK: fecha_seleccion + origen + ticker_usd) -- es la
                                   memoria que permite evaluar si el ranking funciona (evaluar_carteras.py)
+  fact_precios_adr             - precios en dolares de los ADR de las acciones argentinas que
+                                  cotizan tambien en EE.UU. (PK: ticker_usd local + fecha)
   seguimiento                  - acciones que se siguen sin estar en la cartera (todavia), con niveles
                                   de precio a vigilar (PK: ticker_usd) -- la carga seguimiento.py y la
                                   lee monitoreo_cartera.py
@@ -201,6 +203,20 @@ CREATE TABLE IF NOT EXISTS fact_cartera_seleccionada (
     region           VARCHAR,
     alertas          VARCHAR,
     PRIMARY KEY (fecha_seleccion, origen, ticker_usd)
+);
+
+-- ADR de acciones argentinas (GGAL, YPF, PAM...): mismo papel que la accion
+-- local pero en dolares en NYSE. Tabla aparte de fact_precios_daily porque el
+-- ticker del ADR choca con el local (GGAL es las dos cosas) y porque no es un
+-- activo distinto del universo: es la otra punta para medir el CCL implicito.
+CREATE TABLE IF NOT EXISTS fact_precios_adr (
+    ticker_usd  VARCHAR,  -- ticker de la accion local (YPFD), no del ADR
+    ticker_adr  VARCHAR,  -- ticker del ADR en EE.UU. (YPF)
+    fecha       DATE,
+    close       DOUBLE,
+    adj_close   DOUBLE,
+    volume      BIGINT,
+    PRIMARY KEY (ticker_usd, fecha)
 );
 
 -- Lista de seguimiento: la carga el usuario con seguimiento.py (no la llena
@@ -493,6 +509,21 @@ def upsert_fact_precios_daily(con: duckdb.DuckDBPyConnection, precios: pd.DataFr
         ON CONFLICT (ticker_usd, fecha) DO UPDATE SET {actualizaciones}
     """)
     con.unregister("precios_temp")
+
+
+def upsert_fact_precios_adr(con: duckdb.DuckDBPyConnection, precios: pd.DataFrame) -> None:
+    if precios.empty:
+        return
+    columnas = ["ticker_usd", "ticker_adr", "fecha", "close", "adj_close", "volume"]
+    con.register("adr_temp", precios[columnas])
+    con.execute(f"""
+        INSERT INTO fact_precios_adr ({", ".join(columnas)})
+        SELECT {", ".join(columnas)} FROM adr_temp
+        ON CONFLICT (ticker_usd, fecha) DO UPDATE SET
+            ticker_adr = excluded.ticker_adr, close = excluded.close,
+            adj_close = excluded.adj_close, volume = excluded.volume
+    """)
+    con.unregister("adr_temp")
 
 
 def upsert_fact_macro_daily(con: duckdb.DuckDBPyConnection, macro: pd.DataFrame) -> None:

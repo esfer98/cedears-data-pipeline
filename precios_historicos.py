@@ -11,6 +11,10 @@ snapshot/momentum de resultados. Distinta naturaleza, distinto script.
 Adj Close es el dato clave para calcular retornos reales: ya viene corregido
 por splits y dividendos, a diferencia de Close.
 
+Ademas baja los ADR de las acciones argentinas que cotizan en EE.UU. (GGAL,
+YPF, PAM...) a fact_precios_adr: el mismo papel en dolares, para medir el CCL
+implicito sin depender de una cache de notebook.
+
 Correr: python precios_historicos.py
 """
 
@@ -44,6 +48,30 @@ def obtener_precios(ticker: str) -> pd.DataFrame:
     historico.to_csv(path, index=False)
     time.sleep(PAUSA_ENTRE_TICKERS)
     return historico
+
+
+def pares_adr(universo: pd.DataFrame) -> list[tuple[str, str]]:
+    """(ticker local, ticker del ADR) de las acciones argentinas con ADR."""
+    con_adr = universo[(universo["mercado"] == "argentina_local") & universo["ticker_adr_usa"].notna()]
+    return list(zip(con_adr["ticker_usd"], con_adr["ticker_adr_usa"]))
+
+
+def precios_adr(universo: pd.DataFrame) -> pd.DataFrame:
+    filas = []
+    for local, adr in pares_adr(universo):
+        try:
+            h = obtener_precios(adr)
+        except Exception as e:
+            print(f"ADR {adr}: {e}")
+            continue
+        if h.empty:
+            continue
+        filas.append(pd.DataFrame({
+            "ticker_usd": local, "ticker_adr": adr,
+            "fecha": pd.to_datetime(h["Date"], utc=True).dt.date,
+            "close": h["Close"], "adj_close": h["Adj Close"], "volume": h["Volume"],
+        }))
+    return pd.concat(filas, ignore_index=True) if filas else pd.DataFrame()
 
 
 def main() -> None:
@@ -88,10 +116,13 @@ def main() -> None:
     # las fechas quedan con offsets mixtos; a nosotros solo nos importa el dia.
     precios_db["fecha"] = pd.to_datetime(precios_db["Date"], utc=True).dt.date
 
+    adr = precios_adr(universo)
+
     con = db.conectar()
     with db.registrar(con, "precios_historicos") as log:
         db.upsert_fact_precios_daily(con, precios_db)
-        log["filas_afectadas"] = len(precios_db)
+        db.upsert_fact_precios_adr(con, adr)
+        log["filas_afectadas"] = len(precios_db) + len(adr)
     con.close()
     print(f"fact_precios_daily actualizada ({len(precios_db)} filas)")
 

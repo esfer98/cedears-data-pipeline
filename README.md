@@ -177,6 +177,11 @@ modelo dimensional:
   (PK `fecha_seleccion` + `origen` + `ticker_usd`) con el cierre del día como
   precio de selección. Es la memoria que usan `monitoreo_cartera.py` y
   `evaluar_carteras.py`. Ver [REGLAS.md](REGLAS.md).
+- **`fact_precios_adr`** — precios en dólares de los 13 ADR de acciones
+  argentinas (GGAL, YPF, PAM, BMA…), clave = ticker local + fecha. Los carga
+  `precios_historicos.py`. Con el CCL histórico, `precio local / (ADR × CCL)`
+  da un ratio casi constante por empresa (±1% en 2025-2026): sirve para
+  estimar el ratio de conversión desde los datos y medir la brecha implícita.
 - **`seguimiento`** — acciones que se vigilan sin estar en la cartera (PK
   `ticker_usd`), con motivo y niveles opcionales de soporte, resistencia y
   salida. La carga el usuario con `seguimiento.py`; `monitoreo_cartera.py` la
